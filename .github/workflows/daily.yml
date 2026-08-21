@@ -1,0 +1,21 @@
+name: Government Jobs Daily
+on:
+  schedule:
+    - cron: '30 23 * * *' # 05:00 IST
+  workflow_dispatch:
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt
+      - run: python main.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: government-jobs-report
+          path: reports/*.docx
