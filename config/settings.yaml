@@ -1,0 +1,2 @@
+trusted_suffixes: [.gov.in, .nic.in]
+additional_trusted_domains: [upsc.gov.in, ssc.gov.in, ncs.gov.in, employmentnews.gov.in]
