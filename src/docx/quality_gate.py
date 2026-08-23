@@ -91,8 +91,17 @@ def quality_gate(job: dict, facts: dict) -> dict:
 
     for field in ("application_fee", "eligibility", "selection_process", "pay_scale", "important_dates", "how_to_apply"):
         value = _norm(facts.get(field))
-        if value and ("Short Details of Notification" in value or "Rajasthan Energy Various Post Recruitment Online Form" in value):
+        low = value.lower()
+        if value and ("short details of notification" in low or "rajasthan energy various post recruitment online form" in low):
             errors.append(f"Contaminated {field} field detected")
+            suspicious.append(field)
+
+    # Generic DOCX placeholders are not verified eligibility/selection facts.
+    for field in ("eligibility", "selection_process"):
+        value = _norm(facts.get(field))
+        low = value.lower()
+        if value and ("read the notification" in low or "post information, selection procedure" in low):
+            errors.append(f"Unverified placeholder content in {field}")
             suspicious.append(field)
 
     # If every required field is verified and the vacancy table reconciles, PASS.

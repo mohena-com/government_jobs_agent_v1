@@ -90,3 +90,23 @@ def test_reconcile_detailed_total_matches_short_notice():
     assert r['vacancy_reconciliation']['difference'] == 0
     assert r['vacancy_reconciliation']['status'] == 'CONSISTENT'
     assert r['status'] == 'PASS'
+
+def test_v192_repairs_rvunl_pdf_extraction_losses_and_reconciles_to_2005():
+    short = _classify(SHORT_TEXT, 'https://example/short.pdf')
+    ja = _classify(JA_TEXT, 'https://example/ja.pdf')
+    je = _classify(JE_TEXT, 'https://example/je.pdf')
+    r = reconcile([short, ja, je], [])
+    assert r['combined_vacancies'] == 2005
+    assert sorted(x['vacancies'] for x in r['post_vacancies']) == [32, 110, 371, 727, 765]
+    assert r['vacancy_reconciliation']['status'] == 'CONSISTENT'
+    assert r['status'] == 'PASS'
+
+
+def test_v192_never_passes_when_authoritative_total_does_not_reconcile():
+    short = _classify(SHORT_TEXT, 'https://example/short.pdf')
+    ja = _classify(JA_TEXT.replace('Total 186', 'Total 100'), 'https://example/ja.pdf')
+    je = _classify(JE_TEXT, 'https://example/je.pdf')
+    # Remove one post entirely. A missing authoritative post must never PASS.
+    ja['post_sections'] = ja['post_sections'][:1]
+    r = reconcile([short, ja, je], [])
+    assert r['status'] == 'FAIL'

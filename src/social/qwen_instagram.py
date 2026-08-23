@@ -50,8 +50,11 @@ def generate_from_docx(
         gate = quality_gate(job, facts)
         if verify_official:
             gate["official_verification_status"] = verification.get("status") if verification else "NOT_RUN"
-            gate["verification_required"] = False if verification and verification.get("status") == "PASS" else gate.get("verification_required", True)
-            if verification and verification.get("status") == "PASS":
+            gate["verification_required"] = False if verification and verification.get("status") == "PASS" else True
+            if verification and verification.get("status") != "PASS":
+                gate["errors"].append("Official notification verification failed; Qwen generation is blocked")
+                gate["status"] = "FAIL"
+            elif verification and verification.get("status") == "PASS":
                 gate["status"] = "PASS" if not gate.get("errors") else "FAIL"
         any_failed = any_failed or gate["status"] == "FAIL"
 
