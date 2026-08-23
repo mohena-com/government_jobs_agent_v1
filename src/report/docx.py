@@ -1,3 +1,4 @@
+
 import re
 from pathlib import Path
 
@@ -9,66 +10,42 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 
-# =========================================================
-# SOCIAL / NAVIGATION GARBAGE
-# =========================================================
-
 SOCIAL_GARBAGE = {
-    "telegram",
-    "join us",
-    "whatsapp",
-    "instagram",
-    "follow",
-    "x",
-    "image",
+    "telegram", "join us", "whatsapp", "instagram",
+    "follow", "x", "image",
 }
 
 
 def clean_report_value(value):
-    """
-    Remove social-media/navigation artefacts that sometimes
-    leak from SarkariResult HTML into structured fields.
-    """
-
     if value is None:
         return ""
 
-    text = str(value)
-
     cleaned_lines = []
 
-    for raw_line in text.splitlines():
-
+    for raw_line in str(value).splitlines():
         line = raw_line.strip()
-
         if not line:
             continue
 
-        # Remove source bullet characters.
         line = line.lstrip("·•*- ").strip()
-
         if not line:
             continue
 
-        low = line.lower().strip()
+        low = line.lower()
 
-        # Exact garbage.
         if low in SOCIAL_GARBAGE:
             continue
 
-        # Telegram / WhatsApp / Instagram etc.
         if (
-            "telegram" in low
-            or "whatsapp" in low
-            or "instagram" in low
-        ) and len(line) < 100:
+            ("telegram" in low or "whatsapp" in low or "instagram" in low)
+            and len(line) < 100
+        ):
             continue
 
-        # Join Us / Follow.
         if (
-            low.startswith("join us")
-            or low.startswith("follow")
-        ) and len(line) < 100:
+            (low.startswith("join us") or low.startswith("follow"))
+            and len(line) < 100
+        ):
             continue
 
         cleaned_lines.append(line)
@@ -76,12 +53,7 @@ def clean_report_value(value):
     return "\n".join(cleaned_lines).strip()
 
 
-# =========================================================
-# HYPERLINK
-# =========================================================
-
 def add_hyperlink(paragraph, text, url):
-
     if not url:
         return
 
@@ -92,1295 +64,596 @@ def add_hyperlink(paragraph, text, url):
     )
 
     link = OxmlElement("w:hyperlink")
-
-    link.set(
-        qn("r:id"),
-        rid
-    )
+    link.set(qn("r:id"), rid)
 
     run = OxmlElement("w:r")
-
     rPr = OxmlElement("w:rPr")
 
     color = OxmlElement("w:color")
-
-    color.set(
-        qn("w:val"),
-        "0563C1"
-    )
-
+    color.set(qn("w:val"), "0563C1")
     rPr.append(color)
 
     underline = OxmlElement("w:u")
-
-    underline.set(
-        qn("w:val"),
-        "single"
-    )
-
+    underline.set(qn("w:val"), "single")
     rPr.append(underline)
 
     run.append(rPr)
 
     text_node = OxmlElement("w:t")
-
     text_node.text = text
-
     run.append(text_node)
 
     link.append(run)
-
     paragraph._p.append(link)
 
 
-# =========================================================
-# CELL FORMATTING
-# =========================================================
-
-def set_cell_text(
-    cell,
-    text,
-    bold=False
-):
-
+def set_cell_text(cell, text, bold=False):
     cell.text = ""
 
-    cleaned = clean_report_value(
-        text
-    )
+    cleaned = clean_report_value(text) or "Not found"
 
-    if not cleaned:
-        cleaned = "Not found"
+    p = cell.paragraphs[0]
+    p.paragraph_format.space_after = Pt(0)
 
-    paragraph = cell.paragraphs[0]
+    r = p.add_run(cleaned)
+    r.bold = bold
+    r.font.size = Pt(8.5)
 
-    paragraph.paragraph_format.space_after = Pt(0)
-
-    run = paragraph.add_run(
-        cleaned
-    )
-
-    run.bold = bold
-
-    run.font.size = Pt(8.5)
-
-    cell.vertical_alignment = (
-        WD_CELL_VERTICAL_ALIGNMENT.CENTER
-    )
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
 
 def set_repeat_table_header(row):
-
     trPr = row._tr.get_or_add_trPr()
-
-    tblHeader = OxmlElement(
-        "w:tblHeader"
-    )
-
-    tblHeader.set(
-        qn("w:val"),
-        "true"
-    )
-
-    trPr.append(
-        tblHeader
-    )
+    tblHeader = OxmlElement("w:tblHeader")
+    tblHeader.set(qn("w:val"), "true")
+    trPr.append(tblHeader)
 
 
-def set_cell_shading(
-    cell,
-    fill
-):
-
+def set_cell_shading(cell, fill):
     tcPr = cell._tc.get_or_add_tcPr()
-
-    shd = OxmlElement(
-        "w:shd"
-    )
-
-    shd.set(
-        qn("w:fill"),
-        fill
-    )
-
-    tcPr.append(
-        shd
-    )
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:fill"), fill)
+    tcPr.append(shd)
 
 
-def set_table_borders(
-    table
-):
-
-    tbl = table._tbl
-
-    tblPr = tbl.tblPr
-
-    borders = tblPr.first_child_found_in(
-        "w:tblBorders"
-    )
+def set_table_borders(table):
+    tblPr = table._tbl.tblPr
+    borders = tblPr.first_child_found_in("w:tblBorders")
 
     if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        tblPr.append(borders)
 
-        borders = OxmlElement(
-            "w:tblBorders"
-        )
-
-        tblPr.append(
-            borders
-        )
-
-    for edge in (
-        "top",
-        "left",
-        "bottom",
-        "right",
-        "insideH",
-        "insideV",
-    ):
-
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
         tag = "w:" + edge
-
-        element = borders.find(
-            qn(tag)
-        )
+        element = borders.find(qn(tag))
 
         if element is None:
+            element = OxmlElement(tag)
+            borders.append(element)
 
-            element = OxmlElement(
-                tag
-            )
-
-            borders.append(
-                element
-            )
-
-        element.set(
-            qn("w:val"),
-            "single"
-        )
-
-        element.set(
-            qn("w:sz"),
-            "4"
-        )
-
-        element.set(
-            qn("w:space"),
-            "0"
-        )
-
-        element.set(
-            qn("w:color"),
-            "B7B7B7"
-        )
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), "4")
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), "B7B7B7")
 
 
-# =========================================================
-# SECTION HEADING
-# =========================================================
+def add_section_heading(doc, text):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after = Pt(3)
 
-def add_section_heading(
-    doc,
-    text
-):
+    r = p.add_run(text.upper())
+    r.bold = True
+    r.font.size = Pt(10)
 
-    paragraph = doc.add_paragraph()
-
-    paragraph.paragraph_format.space_before = Pt(6)
-
-    paragraph.paragraph_format.space_after = Pt(3)
-
-    run = paragraph.add_run(
-        text.upper()
-    )
-
-    run.bold = True
-
-    run.font.size = Pt(10)
-
-    return paragraph
+    return p
 
 
-# =========================================================
-# KEY / VALUE TABLE
-# =========================================================
-
-def add_key_value_table(
-    doc,
-    rows
-):
-
-    table = doc.add_table(
-        rows=0,
-        cols=2
-    )
-
-    table.alignment = (
-        WD_TABLE_ALIGNMENT.CENTER
-    )
-
+def add_key_value_table(doc, rows):
+    table = doc.add_table(rows=0, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = True
 
     for label, value in rows:
-
         cells = table.add_row().cells
 
-        set_cell_text(
-            cells[0],
-            label,
-            True
-        )
+        set_cell_text(cells[0], label, True)
+        set_cell_text(cells[1], value or "Not found")
+        set_cell_shading(cells[0], "EDEDED")
 
-        set_cell_text(
-            cells[1],
-            value
-            or "Not found"
-        )
-
-        set_cell_shading(
-            cells[0],
-            "EDEDED"
-        )
-
-    set_table_borders(
-        table
-    )
-
+    set_table_borders(table)
     return table
 
 
-# =========================================================
-# CLEAN SECTION LINES
-# =========================================================
-
-def _clean_section_lines(
-    text
-):
-
+def _clean_section_lines(text):
     if not text:
         return []
 
     lines = []
 
     for raw in str(text).splitlines():
-
         line = raw.strip()
-
         if not line:
             continue
 
-        # Remove source bullets.
-        line = line.lstrip(
-            "·•*- "
-        ).strip()
+        line = line.lstrip("·•*- ").strip()
+        line = clean_report_value(line)
 
-        if not line:
-            continue
-
-        # Remove social/navigation garbage.
-        cleaned = clean_report_value(
-            line
-        )
-
-        if not cleaned:
-            continue
-
-        lines.append(
-            cleaned
-        )
+        if line:
+            lines.append(line)
 
     return lines
 
 
-# =========================================================
-# COMBINE LABEL / VALUE
-# =========================================================
-
-def _compact_label_value_lines(
-    lines
-):
-
-    """
-    Converts:
-
-        Pay Exam Fee Last Date :
-        24/08/2026
-
-    into:
-
-        Pay Exam Fee Last Date: 24/08/2026
-    """
-
+def _compact_label_value_lines(lines):
     result = []
-
     i = 0
 
     while i < len(lines):
-
         current = lines[i].strip()
 
-        if (
-            current.endswith(":")
-            and i + 1 < len(lines)
-        ):
+        if current.endswith(":") and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
 
-            next_line = lines[
-                i + 1
-            ].strip()
-
-            if (
-                next_line
-                and not next_line.endswith(":")
-            ):
-
+            if nxt and not nxt.endswith(":"):
                 result.append(
-                    current.rstrip(":").strip()
-                    + ": "
-                    + next_line
+                    current.rstrip(":").strip() + ": " + nxt
                 )
-
                 i += 2
-
                 continue
 
-        result.append(
-            current
-        )
-
+        result.append(current)
         i += 1
 
     return result
 
 
-# =========================================================
-# COMPACT SECTION
-# =========================================================
-
-def add_compact_section(
-    doc,
-    text,
-    mode="lines"
-):
-
-    lines = _clean_section_lines(
-        text
-    )
+def add_compact_section(doc, text, mode="lines"):
+    lines = _clean_section_lines(text)
 
     if not lines:
-
-        doc.add_paragraph(
-            "Not found"
-        )
-
+        doc.add_paragraph("Not found")
         return
 
-    compact = _compact_label_value_lines(
-        lines
-    )
-
-    for line in compact:
-
+    for line in _compact_label_value_lines(lines):
         line = (
-            line
-            .replace("**", "")
-            .replace("__", "")
-            .strip()
+            line.replace("**", "")
+                .replace("__", "")
+                .strip()
         )
 
-        line = clean_report_value(
-            line
-        )
-
+        line = clean_report_value(line)
         if not line:
             continue
 
-        # -------------------------------------------------
-        # ELIGIBILITY MODE
-        # -------------------------------------------------
-
         if mode == "eligibility":
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(2)
+            p.paragraph_format.keep_together = True
 
-            paragraph = doc.add_paragraph()
-
-            paragraph.paragraph_format.space_after = Pt(2)
-
-            paragraph.paragraph_format.keep_together = True
-
-            if re.match(
-                r"^Management Trainee\s*\(",
-                line,
-                re.I
-            ):
-
-                run = paragraph.add_run(
-                    line
-                )
-
-                run.bold = True
-
-                run.font.size = Pt(9)
-
+            if re.match(r"^Management Trainee\s*\(", line, re.I):
+                r = p.add_run(line)
+                r.bold = True
+                r.font.size = Pt(9)
             else:
-
-                paragraph.paragraph_format.left_indent = Inches(
-                    0.18
-                )
-
-                paragraph.add_run(
-                    line
-                )
-
-        # -------------------------------------------------
-        # BULLET MODE
-        # -------------------------------------------------
+                p.paragraph_format.left_indent = Inches(0.18)
+                p.add_run(line)
 
         elif mode == "bullets":
-
-            paragraph = doc.add_paragraph(
-                style="List Bullet"
-            )
-
-            paragraph.paragraph_format.space_after = Pt(1)
-
-            paragraph.paragraph_format.left_indent = Inches(
-                0.18
-            )
-
-            paragraph.add_run(
-                line
-            )
-
-        # -------------------------------------------------
-        # COMPACT / NORMAL MODE
-        # -------------------------------------------------
+            p = doc.add_paragraph(style="List Bullet")
+            p.paragraph_format.space_after = Pt(1)
+            p.paragraph_format.left_indent = Inches(0.18)
+            p.add_run(line)
 
         else:
-
-            paragraph = doc.add_paragraph()
-
-            paragraph.paragraph_format.space_after = Pt(1)
-
-            paragraph.paragraph_format.keep_together = True
-
-            paragraph.add_run(
-                line
-            )
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(1)
+            p.paragraph_format.keep_together = True
+            p.add_run(line)
 
 
-# =========================================================
-# VACANCY TABLE
-# =========================================================
-
-def add_vacancy_table(
-    doc,
-    rows
-):
-
+def add_vacancy_table(doc, rows):
     if not rows:
-
-        doc.add_paragraph(
-            "No structured vacancy table detected."
-        )
-
+        doc.add_paragraph("No structured vacancy table detected.")
         return
 
-    table = doc.add_table(
-        rows=1,
-        cols=2
-    )
-
-    table.alignment = (
-        WD_TABLE_ALIGNMENT.CENTER
-    )
-
+    table = doc.add_table(rows=1, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = True
 
     header = table.rows[0]
+    set_repeat_table_header(header)
 
-    set_repeat_table_header(
-        header
-    )
+    set_cell_text(header.cells[0], "Post", True)
+    set_cell_text(header.cells[1], "Vacancies", True)
 
-    set_cell_text(
-        header.cells[0],
-        "Post",
-        True
-    )
-
-    set_cell_text(
-        header.cells[1],
-        "Vacancies",
-        True
-    )
-
-    set_cell_shading(
-        header.cells[0],
-        "D9EAF7"
-    )
-
-    set_cell_shading(
-        header.cells[1],
-        "D9EAF7"
-    )
+    set_cell_shading(header.cells[0], "D9EAF7")
+    set_cell_shading(header.cells[1], "D9EAF7")
 
     for row in rows:
-
         cells = table.add_row().cells
+        set_cell_text(cells[0], row.get("post_name", ""))
+        set_cell_text(cells[1], row.get("vacancies", ""))
 
-        set_cell_text(
-            cells[0],
-            row.get(
-                "post_name",
-                ""
-            )
-        )
-
-        set_cell_text(
-            cells[1],
-            row.get(
-                "vacancies",
-                ""
-            )
-        )
-
-    set_table_borders(
-        table
-    )
+    set_table_borders(table)
 
 
-# =========================================================
-# OFFICIAL LINKS
-# =========================================================
-
-def add_links(
-    doc,
-    job
-):
-
+def add_links(doc, job):
     links = []
 
-    # -----------------------------------------------------
-    # Application links
-    # -----------------------------------------------------
-
-    for link in job.get(
-        "application_links",
-        []
-    ):
-
-        url = link.get(
-            "url"
-        )
-
+    for link in job.get("application_links", []):
+        url = link.get("url")
         if url:
+            links.append(("Apply Online", url))
 
-            links.append(
-                (
-                    "Apply Online",
-                    url
-                )
-            )
-
-    # -----------------------------------------------------
-    # Notification links
-    # -----------------------------------------------------
-
-    for link in job.get(
-        "notification_links",
-        []
-    ):
-
-        url = link.get(
-            "url"
-        )
-
+    for link in job.get("notification_links", []):
+        url = link.get("url")
         if url:
-
-            links.append(
-                (
-                    "Official Notification",
-                    url
-                )
-            )
-
-    # -----------------------------------------------------
-    # Remove duplicates
-    # -----------------------------------------------------
+            links.append(("Official Notification", url))
 
     unique = []
-
     seen = set()
 
     for label, url in links:
-
-        key = (
-            label,
-            url
-        )
-
+        key = (label, url)
         if key not in seen:
+            seen.add(key)
+            unique.append((label, url))
 
-            seen.add(
-                key
-            )
+    existing_urls = {url for _, url in unique}
 
+    for link in job.get("official_candidates", []):
+        url = link.get("url")
+        if url and url not in existing_urls:
             unique.append(
                 (
-                    label,
-                    url
+                    link.get("text") or "Official Website",
+                    url,
                 )
             )
-
-    # -----------------------------------------------------
-    # Official candidates
-    # -----------------------------------------------------
-
-    existing_urls = {
-        url
-        for _, url in unique
-    }
-
-    for link in job.get(
-        "official_candidates",
-        []
-    ):
-
-        url = link.get(
-            "url"
-        )
-
-        if (
-            url
-            and url not in existing_urls
-        ):
-
-            unique.append(
-                (
-                    link.get(
-                        "text"
-                    )
-                    or "Official Website",
-                    url
-                )
-            )
-
-            existing_urls.add(
-                url
-            )
-
-    # -----------------------------------------------------
-    # No links
-    # -----------------------------------------------------
+            existing_urls.add(url)
 
     if not unique:
-
         doc.add_paragraph(
             "No external application/notification link detected."
         )
-
         return
 
-    # -----------------------------------------------------
-    # LINK TABLE
-    # -----------------------------------------------------
-
-    table = doc.add_table(
-        rows=1,
-        cols=2
-    )
-
-    table.alignment = (
-        WD_TABLE_ALIGNMENT.CENTER
-    )
+    table = doc.add_table(rows=1, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
     header = table.rows[0]
+    set_repeat_table_header(header)
 
-    set_repeat_table_header(
-        header
-    )
+    set_cell_text(header.cells[0], "Type", True)
+    set_cell_text(header.cells[1], "URL", True)
 
-    set_cell_text(
-        header.cells[0],
-        "Type",
-        True
-    )
-
-    set_cell_text(
-        header.cells[1],
-        "URL",
-        True
-    )
-
-    set_cell_shading(
-        header.cells[0],
-        "D9EAF7"
-    )
-
-    set_cell_shading(
-        header.cells[1],
-        "D9EAF7"
-    )
-
-    # -----------------------------------------------------
-    # ACTUAL URL
-    # -----------------------------------------------------
+    set_cell_shading(header.cells[0], "D9EAF7")
+    set_cell_shading(header.cells[1], "D9EAF7")
 
     for label, url in unique:
-
         cells = table.add_row().cells
 
-        set_cell_text(
-            cells[0],
-            label,
-            True
-        )
+        set_cell_text(cells[0], label, True)
 
         cells[1].text = ""
+        p = cells[1].paragraphs[0]
+        p.paragraph_format.space_after = Pt(0)
 
-        paragraph = cells[
-            1
-        ].paragraphs[0]
+        # Display the actual URL, not "Open link".
+        add_hyperlink(p, url, url)
 
-        # IMPORTANT:
-        # Display the actual URL.
-        add_hyperlink(
-            paragraph,
-            url,
-            url
-        )
-
-        paragraph.paragraph_format.space_after = Pt(0)
-
-    set_table_borders(
-        table
-    )
+    set_table_borders(table)
 
 
-# =========================================================
-# ONE JOB
-# =========================================================
+def _configure_document(doc):
+    section = doc.sections[0]
+    section.top_margin = Inches(0.45)
+    section.bottom_margin = Inches(0.45)
+    section.left_margin = Inches(0.55)
+    section.right_margin = Inches(0.55)
 
-def add_job(
-    doc,
-    job,
-    index
-):
+    normal = doc.styles["Normal"]
+    normal.font.name = "Aptos"
+    normal.font.size = Pt(8.5)
 
-    listing = job.get(
-        "listing",
-        {}
-    )
+
+def add_job(doc, job, index=None):
+    listing = job.get("listing", {})
 
     title = (
-        job.get(
-            "post_title"
-        )
-        or listing.get(
-            "title"
-        )
+        job.get("post_title")
+        or listing.get("title")
         or "Recruitment Notice"
     )
 
-    # New page for every recruitment.
-    if index > 1:
-
+    if index is not None and index > 1:
         doc.add_page_break()
 
-    # -----------------------------------------------------
-    # TITLE
-    # -----------------------------------------------------
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    paragraph = doc.add_paragraph()
+    r = p.add_run(title)
+    r.bold = True
+    r.font.size = Pt(15)
 
-    paragraph.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    run = paragraph.add_run(
-        title
-    )
+    organisation = clean_report_value(
+        job.get("organisation")
+    ) or "Organisation not identified"
 
-    run.bold = True
-
-    run.font.size = Pt(15)
-
-    # -----------------------------------------------------
-    # ORGANISATION
-    # -----------------------------------------------------
-
-    paragraph = doc.add_paragraph()
-
-    paragraph.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    run = paragraph.add_run(
-        clean_report_value(
-            job.get(
-                "organisation"
-            )
-        )
-        or "Organisation not identified"
-    )
-
-    run.bold = True
-
-    run.font.size = Pt(10)
-
-    # -----------------------------------------------------
-    # DEADLINE
-    # -----------------------------------------------------
+    r = p.add_run(organisation)
+    r.bold = True
+    r.font.size = Pt(10)
 
     deadline = (
-        job.get(
-            "application_end"
-        )
-        or listing.get(
-            "last_date"
-        )
+        job.get("application_end")
+        or listing.get("last_date")
         or "Not found"
     )
 
-    paragraph = doc.add_paragraph()
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    paragraph.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    run = paragraph.add_run(
+    r = p.add_run(
         "APPLICATION DEADLINE: "
-        + clean_report_value(
-            deadline
-        )
+        + clean_report_value(deadline)
     )
+    r.bold = True
+    r.font.size = Pt(10)
 
-    run.bold = True
-
-    run.font.size = Pt(10)
-
-    # -----------------------------------------------------
-    # KEY INFORMATION
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Key Information"
-    )
+    add_section_heading(doc, "Key Information")
 
     add_key_value_table(
         doc,
         [
             (
                 "Advertisement / Reference No.",
-                job.get(
-                    "advertisement_number"
-                ),
+                job.get("advertisement_number"),
             ),
             (
                 "Published / Updated",
-                job.get(
-                    "post_update"
-                ),
+                job.get("post_update"),
             ),
             (
                 "Total Vacancies",
-                job.get(
-                    "total_vacancies"
-                ),
+                job.get("total_vacancies"),
             ),
             (
                 "Application Start",
-                job.get(
-                    "application_start"
-                ),
+                job.get("application_start"),
             ),
             (
                 "Application End",
-                job.get(
-                    "application_end"
-                ),
+                job.get("application_end"),
             ),
             (
                 "Age Limit",
-                job.get(
-                    "age_limit"
-                ),
+                job.get("age_limit"),
             ),
         ],
     )
 
-    # -----------------------------------------------------
-    # IMPORTANT DATES
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Important Dates"
-    )
-
+    add_section_heading(doc, "Important Dates")
     add_compact_section(
         doc,
-        job.get(
-            "important_dates_raw"
-        ),
-        mode="compact"
+        job.get("important_dates_raw"),
+        mode="compact",
     )
 
-    # -----------------------------------------------------
-    # APPLICATION FEE
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Application Fee"
-    )
-
+    add_section_heading(doc, "Application Fee")
     add_compact_section(
         doc,
-        job.get(
-            "application_fee"
-        ),
-        mode="compact"
+        job.get("application_fee"),
+        mode="compact",
     )
 
-    # -----------------------------------------------------
-    # VACANCIES
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Vacancy Details"
-    )
-
+    add_section_heading(doc, "Vacancy Details")
     add_vacancy_table(
         doc,
-        job.get(
-            "vacancy_rows",
-            []
-        )
+        job.get("vacancy_rows", []),
     )
 
-    # -----------------------------------------------------
-    # ELIGIBILITY
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Eligibility"
-    )
-
+    add_section_heading(doc, "Eligibility")
     add_compact_section(
         doc,
-        job.get(
-            "eligibility"
-        ),
-        mode="eligibility"
+        job.get("eligibility"),
+        mode="eligibility",
     )
 
-    # -----------------------------------------------------
-    # SELECTION
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Selection Process"
-    )
-
+    add_section_heading(doc, "Selection Process")
     add_compact_section(
         doc,
-        job.get(
-            "selection_process"
-        ),
-        mode="bullets"
+        job.get("selection_process"),
+        mode="bullets",
     )
 
-    # -----------------------------------------------------
-    # PAY
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Pay / Salary"
-    )
-
+    add_section_heading(doc, "Pay / Salary")
     add_compact_section(
         doc,
-        job.get(
-            "pay_scale"
-        ),
-        mode="bullets"
+        job.get("pay_scale"),
+        mode="bullets",
     )
 
-    # -----------------------------------------------------
-    # HOW TO APPLY
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "How to Apply"
-    )
-
+    add_section_heading(doc, "How to Apply")
     add_compact_section(
         doc,
-        job.get(
-            "how_to_apply"
-        ),
-        mode="bullets"
+        job.get("how_to_apply"),
+        mode="bullets",
     )
 
-    # -----------------------------------------------------
-    # OFFICIAL LINKS
-    # -----------------------------------------------------
+    add_section_heading(doc, "Official Links")
+    add_links(doc, job)
 
-    add_section_heading(
-        doc,
-        "Official Links"
-    )
+    add_section_heading(doc, "Source")
 
-    add_links(
-        doc,
-        job
-    )
-
-    # -----------------------------------------------------
-    # SOURCE
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Source"
-    )
-
-    paragraph = doc.add_paragraph()
-
-    paragraph.paragraph_format.space_after = Pt(0)
-
-    paragraph.add_run(
-        "SarkariResult detail page: "
-    ).bold = True
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(0)
+    p.add_run("SarkariResult detail page: ").bold = True
 
     add_hyperlink(
-        paragraph,
-        job.get(
-            "detail_url",
-            ""
-        ),
-        job.get(
-            "detail_url",
-            ""
-        )
+        p,
+        job.get("detail_url", ""),
+        job.get("detail_url", ""),
     )
 
 
-# =========================================================
-# COMPLETE REPORT
-# =========================================================
+def _safe_filename(text, max_len=90):
+    text = clean_report_value(text) or "Recruitment"
+    text = re.sub(r"[^\w\s.-]", "", text)
+    text = re.sub(r"\s+", "_", text).strip("_")
+    return text[:max_len] or "Recruitment"
 
-def make_report(
-    today,
-    results,
-    out
-):
 
+def make_summary_report(today, results, out):
+    """
+    Create ONLY the summary/index DOCX.
+
+    The summary contains the report title and one index table.
+    Detailed recruitment information is written to separate DOCX files.
+    """
     doc = Document()
+    _configure_document(doc)
 
-    # -----------------------------------------------------
-    # PAGE SETUP
-    # -----------------------------------------------------
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    section = doc.sections[0]
-
-    section.top_margin = Inches(
-        0.45
+    r = p.add_run(
+        f"Government Jobs Report — {today:%d %B %Y}"
     )
+    r.bold = True
+    r.font.size = Pt(18)
 
-    section.bottom_margin = Inches(
-        0.45
-    )
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    section.left_margin = Inches(
-        0.55
-    )
-
-    section.right_margin = Inches(
-        0.55
-    )
-
-    # -----------------------------------------------------
-    # DEFAULT FONT
-    # -----------------------------------------------------
-
-    normal = doc.styles[
-        "Normal"
-    ]
-
-    normal.font.name = "Aptos"
-
-    normal.font.size = Pt(
-        8.5
-    )
-
-    # -----------------------------------------------------
-    # REPORT TITLE
-    # -----------------------------------------------------
-
-    paragraph = doc.add_paragraph()
-
-    paragraph.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    run = paragraph.add_run(
-        f"Government Jobs Report — "
-        f"{today:%d %B %Y}"
-    )
-
-    run.bold = True
-
-    run.font.size = Pt(
-        18
-    )
-
-    paragraph = doc.add_paragraph()
-
-    paragraph.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    run = paragraph.add_run(
+    r = p.add_run(
         "Source: SarkariResult Latest Jobs | "
         "Future last-date listings only"
     )
+    r.font.size = Pt(9)
 
-    run.font.size = Pt(
-        9
-    )
+    add_section_heading(doc, "Index")
 
-    # -----------------------------------------------------
-    # INDEX
-    # -----------------------------------------------------
-
-    add_section_heading(
-        doc,
-        "Index"
-    )
-
-    table = doc.add_table(
-        rows=1,
-        cols=4
-    )
-
-    table.alignment = (
-        WD_TABLE_ALIGNMENT.CENTER
-    )
+    table = doc.add_table(rows=1, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
 
     header = table.rows[0]
-
-    set_repeat_table_header(
-        header
-    )
+    set_repeat_table_header(header)
 
     for cell, label in zip(
         header.cells,
-        [
-            "#",
-            "Organisation",
-            "Post",
-            "Last Date",
-        ],
+        ["#", "Organisation", "Post", "Last Date"],
     ):
+        set_cell_text(cell, label, True)
+        set_cell_shading(cell, "D9EAF7")
 
-        set_cell_text(
-            cell,
-            label,
-            True
-        )
-
-        set_cell_shading(
-            cell,
-            "D9EAF7"
-        )
-
-    for i, job in enumerate(
-        results,
-        1
-    ):
-
-        listing = job.get(
-            "listing",
-            {}
-        )
+    for i, job in enumerate(results, 1):
+        listing = job.get("listing", {})
 
         cells = table.add_row().cells
 
-        set_cell_text(
-            cells[0],
-            i
-        )
-
+        set_cell_text(cells[0], i)
         set_cell_text(
             cells[1],
-            job.get(
-                "organisation"
-            )
-            or "Not identified"
+            job.get("organisation") or "Not identified",
         )
-
         set_cell_text(
             cells[2],
-            job.get(
-                "post_title"
-            )
-            or listing.get(
-                "title",
-                ""
-            )
+            job.get("post_title")
+            or listing.get("title", ""),
         )
-
         set_cell_text(
             cells[3],
-            job.get(
-                "application_end"
-            )
-            or listing.get(
-                "last_date",
-                ""
-            )
+            job.get("application_end")
+            or listing.get("last_date", ""),
         )
 
-    set_table_borders(
-        table
-    )
+    set_table_borders(table)
 
-    # -----------------------------------------------------
-    # JOB SECTIONS
-    # -----------------------------------------------------
-
-    for i, job in enumerate(
-        results,
-        1
-    ):
-
-        add_job(
-            doc,
-            job,
-            i
-        )
-
-    # -----------------------------------------------------
-    # SAVE
-    # -----------------------------------------------------
-
-    Path(
-        out
-    ).parent.mkdir(
+    Path(out).parent.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
-    doc.save(
-        out
-    )
+    doc.save(out)
 
     return out
+
+
+def make_job_reports(today, results, output_dir):
+    """
+    Create one DOCX per recruitment.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    files = []
+
+    for i, job in enumerate(results, 1):
+        listing = job.get("listing", {})
+
+        title = (
+            job.get("post_title")
+            or listing.get("title")
+            or f"Recruitment_{i}"
+        )
+
+        filename = (
+            f"{i:02d}_"
+            f"{_safe_filename(title)}_"
+            f"{today.isoformat()}.docx"
+        )
+
+        path = output_dir / filename
+
+        doc = Document()
+        _configure_document(doc)
+        add_job(doc, job)
+
+        doc.save(path)
+        files.append(path)
+
+    return files
+
+
+def make_report(today, results, out):
+    """
+    V1.4 output:
+
+        reports/
+        ├── SarkariResult_LatestJobs_YYYY-MM-DD_Summary.docx
+        └── jobs/
+            ├── 01_....docx
+            ├── 02_....docx
+            └── ...
+
+    Returns:
+        (summary_path, [job_paths...])
+    """
+    out = Path(out)
+
+    # Keep the user-facing summary filename predictable.
+    summary_out = out.with_name(
+        out.stem + "_Summary" + out.suffix
+    )
+
+    jobs_dir = out.parent / "jobs"
+
+    summary_path = make_summary_report(
+        today,
+        results,
+        summary_out,
+    )
+
+    job_files = make_job_reports(
+        today,
+        results,
+        jobs_dir,
+    )
+
+    return summary_path, job_files

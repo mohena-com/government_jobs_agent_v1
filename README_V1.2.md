@@ -75,3 +75,22 @@ as `Pay Exam Fee Last Date :` followed by `24/08/2026` are rendered as
 `Pay Exam Fee Last Date: 24/08/2026` on one line.
 
 Long eligibility/instruction content remains readable as bullets.
+
+
+## V1.4 — Split Report Output
+
+The Word output is now split into:
+
+1. A summary/index document:
+   `reports/SarkariResult_LatestJobs_YYYY-MM-DD_Summary.docx`
+
+2. One detailed Word document per recruitment:
+   `reports/jobs/01_....docx`
+   `reports/jobs/02_....docx`
+   etc.
+
+The summary contains only the title, source, and recruitment index table.
+Each job detail file contains the complete structured recruitment details.
+
+This avoids a large combined document and makes it easier to distribute or
+archive individual recruitment notices.
