@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -u
 
-# ============================================================
-# Government Jobs → DOCX → Qwen JSON → Instagram Slides
-# ============================================================
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
 
 PYTHON_BIN="${PYTHON_BIN:-python3.1}"
-OLLAMA_HOST="${OLLAMA_HOST:-http://webmaster-ai.local:11434}"
+OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:8b}"
 
 TODAY="$(date '+%Y-%m-%d')"
@@ -30,7 +26,7 @@ echo " Duplicate filtering: OFF"
 echo "============================================================"
 
 # ------------------------------------------------------------
-# 1. Crawl + generate ALL Job Detail DOCX files
+# 1. Crawl + generate Job Detail DOCX files
 # ------------------------------------------------------------
 
 echo
@@ -41,38 +37,49 @@ echo
 
 CRAWL_RC=$?
 
-if [[ $CRAWL_RC -ne 0 ]]; then
+if [ "$CRAWL_RC" -ne 0 ]; then
     echo
-    echo "ERROR: Job crawler failed."
-    exit $CRAWL_RC
+    echo "ERROR: crawler failed."
+    exit "$CRAWL_RC"
 fi
 
 # ------------------------------------------------------------
-# Find DOCX files generated TODAY
+# Find today's generated DOCX files
+# macOS-compatible: NO mapfile
 # ------------------------------------------------------------
 
 echo
 echo "Finding today's Job Detail DOCX files..."
 
-mapfile -t JOB_DOCXS < <(
-    find "$DOCX_DIR" -type f -name "*.docx" \
-        -newermt "${TODAY} 00:00:00" \
-        ! -name "*Summary.docx" \
-        | sort
-)
+JOB_COUNT=0
+JOB_DOCXS=""
 
-JOB_COUNT="${#JOB_DOCXS[@]}"
+while IFS= read -r DOCX
+do
+    if [ -n "$DOCX" ]; then
+        JOB_COUNT=$((JOB_COUNT + 1))
+        JOB_DOCXS="${JOB_DOCXS}
+${DOCX}"
+    fi
+done <<EOF
+$(find "$DOCX_DIR" \
+    -type f \
+    -name "*.docx" \
+    -newermt "${TODAY} 00:00:00" \
+    ! -name "*Summary.docx" \
+    | sort)
+EOF
 
 echo "Job Detail DOCX files found: ${JOB_COUNT}"
 
-if [[ "$JOB_COUNT" -eq 0 ]]; then
+if [ "$JOB_COUNT" -eq 0 ]; then
     echo
     echo "ERROR: No Job Detail DOCX files found."
     exit 1
 fi
 
 # ------------------------------------------------------------
-# 2. Qwen JSON generation for EVERY DOCX
+# 2. Generate Qwen JSON for every DOCX
 # ------------------------------------------------------------
 
 echo
@@ -83,17 +90,19 @@ echo "============================================================"
 SUCCESS_QWEN=0
 FAILED_QWEN=0
 
-declare -a QWEN_PLANS=()
+# Use a temporary list because macOS Bash has no mapfile.
+QWEN_LIST="${QWEN_DIR}/_successful_plans.txt"
+rm -f "$QWEN_LIST"
+touch "$QWEN_LIST"
 
 JOB_NO=0
 
-for DOCX in "${JOB_DOCXS[@]}"; do
+while IFS= read -r DOCX
+do
+    [ -z "$DOCX" ] && continue
 
     JOB_NO=$((JOB_NO + 1))
 
-    BASENAME="$(basename "$DOCX" .docx)"
-
-    # Safe output folder
     JOB_QWEN_DIR="${QWEN_DIR}/${JOB_NO}"
     mkdir -p "$JOB_QWEN_DIR"
 
@@ -103,9 +112,6 @@ for DOCX in "${JOB_DOCXS[@]}"; do
     echo "DOCX: ${DOCX}"
     echo "------------------------------------------------------------"
 
-    # IMPORTANT:
-    # Each DOCX is processed as job-index 1 because the DOCX contains
-    # the single job we are sending to Qwen.
     "$PYTHON_BIN" main.py \
         --docx "$DOCX" \
         --qwen \
@@ -120,18 +126,15 @@ for DOCX in "${JOB_DOCXS[@]}"; do
 
     PLAN="${JOB_QWEN_DIR}/qwen_instagram_plans.json"
 
-    if [[ $RC -eq 0 && -f "$PLAN" ]]; then
+    if [ "$RC" -eq 0 ] && [ -f "$PLAN" ]; then
 
-        # Confirm that the job actually passed presentation QA.
         READY="$(
             "$PYTHON_BIN" - "$PLAN" <<'PY'
 import json
 import sys
 
-p = sys.argv[1]
-
 try:
-    with open(p, encoding="utf-8") as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         d = json.load(f)
 
     jobs = d.get("jobs", [])
@@ -140,23 +143,26 @@ try:
         print("false")
         raise SystemExit
 
-    j = jobs[0]
+    job = jobs[0]
 
-    gate = j.get("slide_quality_gate") or {}
-    ready = j.get("presentation_ready") is True
-    passed = gate.get("status") == "PASS"
+    ready = job.get("presentation_ready") is True
+    gate = job.get("slide_quality_gate") or {}
+    gate_pass = gate.get("status") == "PASS"
 
-    print("true" if ready and passed else "false")
+    print("true" if ready and gate_pass else "false")
 
 except Exception:
     print("false")
 PY
-    )"
+)"
 
-        if [[ "$READY" == "true" ]]; then
+        if [ "$READY" = "true" ]; then
             echo "QWEN: PASS"
+
             SUCCESS_QWEN=$((SUCCESS_QWEN + 1))
-            QWEN_PLANS+=("$PLAN")
+
+            printf '%s\n' "$PLAN" >> "$QWEN_LIST"
+
         else
             echo "QWEN: FAIL — presentation not ready"
             FAILED_QWEN=$((FAILED_QWEN + 1))
@@ -167,7 +173,9 @@ PY
         FAILED_QWEN=$((FAILED_QWEN + 1))
     fi
 
-done
+done <<EOF
+$JOB_DOCXS
+EOF
 
 # ------------------------------------------------------------
 # 3. Render every successful Qwen JSON
@@ -183,8 +191,11 @@ RENDER_FAILED=0
 TOTAL_SLIDES=0
 
 PLAN_NO=0
+PLAN_COUNT="$SUCCESS_QWEN"
 
-for PLAN in "${QWEN_PLANS[@]}"; do
+while IFS= read -r PLAN
+do
+    [ -z "$PLAN" ] && continue
 
     PLAN_NO=$((PLAN_NO + 1))
 
@@ -196,7 +207,7 @@ for PLAN in "${QWEN_PLANS[@]}"; do
 
     echo
     echo "------------------------------------------------------------"
-    echo "[${PLAN_NO}/${#QWEN_PLANS[@]}] Rendering"
+    echo "[${PLAN_NO}/${PLAN_COUNT}] Rendering"
     echo "JSON: ${PLAN}"
     echo "OUTPUT: ${JOB_RENDER_DIR}"
     echo "------------------------------------------------------------"
@@ -208,16 +219,15 @@ for PLAN in "${QWEN_PLANS[@]}"; do
 
     RC=$?
 
-    # Count actual PNG files.
-    PNG_COUNT="$(
+    PNG_COUNT=$(
         find "$JOB_RENDER_DIR" \
             -type f \
-            \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" \) \
+            -name "*.png" \
             | wc -l \
             | tr -d ' '
-    )"
+    )
 
-    if [[ $RC -eq 0 && "$PNG_COUNT" -ge 6 ]]; then
+    if [ "$RC" -eq 0 ] && [ "$PNG_COUNT" -ge 6 ]; then
 
         echo "RENDER: PASS"
         echo "Slides: ${PNG_COUNT}"
@@ -231,16 +241,22 @@ for PLAN in "${QWEN_PLANS[@]}"; do
         echo "PNG files produced: ${PNG_COUNT}"
 
         RENDER_FAILED=$((RENDER_FAILED + 1))
-
     fi
 
-done
+done < "$QWEN_LIST"
 
 # ------------------------------------------------------------
 # Final report
 # ------------------------------------------------------------
 
-"$PYTHON_BIN" - "$REPORT" "$JOB_COUNT" "$SUCCESS_QWEN" "$FAILED_QWEN" "$RENDER_SUCCESS" "$RENDER_FAILED" "$TOTAL_SLIDES" <<'PY'
+"$PYTHON_BIN" - "$REPORT" \
+    "$JOB_COUNT" \
+    "$SUCCESS_QWEN" \
+    "$FAILED_QWEN" \
+    "$RENDER_SUCCESS" \
+    "$RENDER_FAILED" \
+    "$TOTAL_SLIDES" <<'PY'
+
 import json
 import sys
 from datetime import datetime
@@ -258,40 +274,55 @@ from datetime import datetime
 data = {
     "version": "1.9.22",
     "date": datetime.now().strftime("%Y-%m-%d"),
-    "selection_rule": "DOCX files generated by crawler for listings with LAST DATE > TODAY",
+    "selection_rule": "crawler-selected listings with LAST DATE > TODAY",
     "duplicate_filtering": False,
+
     "job_detail_docx_count": int(job_count),
+
     "qwen_success": int(qwen_success),
     "qwen_failed": int(qwen_failed),
+
     "render_success": int(render_success),
     "render_failed": int(render_failed),
+
     "slides_rendered": int(slides),
 }
 
 with open(report, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
+    json.dump(
+        data,
+        f,
+        indent=2,
+        ensure_ascii=False
+    )
 PY
 
 echo
 echo "============================================================"
 echo " DAILY GENERATION COMPLETE"
 echo "============================================================"
+
 echo "Job Detail DOCX : ${JOB_COUNT}"
 echo "Qwen PASS        : ${SUCCESS_QWEN}"
 echo "Qwen FAIL        : ${FAILED_QWEN}"
 echo "Render PASS      : ${RENDER_SUCCESS}"
 echo "Render FAIL      : ${RENDER_FAILED}"
 echo "Slides rendered  : ${TOTAL_SLIDES}"
+
 echo
 echo "DOCX:"
 echo "  ${DOCX_DIR}/"
+
 echo
 echo "Qwen JSON:"
 echo "  ${QWEN_DIR}/"
+
 echo
 echo "Instagram:"
 echo "  ${RENDER_DIR}/"
+
 echo
 echo "Report:"
 echo "  ${REPORT}"
+
 echo "============================================================"
