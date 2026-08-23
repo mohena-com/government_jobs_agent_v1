@@ -15,107 +15,91 @@ def add_hyperlink(paragraph, text, url):
     h = OxmlElement("w:hyperlink")
     h.set(qn("r:id"), rid)
     r = OxmlElement("w:r")
-    t = OxmlElement("w:t")
-    t.text = text
-    r.append(t)
-    h.append(r)
-    paragraph._p.append(h)
+    t = OxmlElement("w:t"); t.text = text
+    r.append(t); h.append(r); paragraph._p.append(h)
 
-def add_label(p, label, value):
+def field(doc, label, value):
+    p = doc.add_paragraph()
     p.add_run(label + ": ").bold = True
     p.add_run(str(value or "Not found"))
+    return p
 
 def make_report(today, results, out):
     doc = Document()
     doc.styles["Normal"].font.name = "Aptos"
     doc.styles["Normal"].font.size = Pt(9)
 
-    doc.add_heading(f"Government Jobs — Deep SarkariResult Crawl — {today:%d %B %Y}", 0)
+    doc.add_heading(f"SarkariResult Latest Jobs — Deep Detail Crawl — {today:%d %B %Y}", 0)
     doc.add_paragraph(
-        "SarkariResult is used only for discovery. Each future-dated listing is "
-        "followed to its individual detail page. Official links are separately identified."
+        "Scope: https://www.sarkariresult.com/latestjob/ only. "
+        "Only listings with Last Date strictly later than today are included. "
+        "Each retained listing is followed to its individual SarkariResult detail page."
     )
 
-    # Index
     doc.add_heading("Index", 1)
-    table = doc.add_table(rows=1, cols=6)
-    for c, label in zip(table.rows[0].cells,
-                        ["#", "Listing", "Last Date", "Detail Page", "Official Notification", "Official Application"]):
+    table = doc.add_table(rows=1, cols=4)
+    for c, label in zip(table.rows[0].cells, ["#", "Job", "Last Date", "Detail"]):
         c.text = label
 
     for i, r in enumerate(results, 1):
-        row = table.add_row().cells
-        row[0].text = str(i)
-        row[1].text = r["listing"]["title"]
-        row[2].text = r["listing"]["last_date"]
-
-        p = row[3].paragraphs[0]
-        add_hyperlink(p, "Open", r["detail_url"])
-
-        p = row[4].paragraphs[0]
-        if r.get("notification_links"):
-            add_hyperlink(p, "Notification", r["notification_links"][0]["url"])
-        else:
-            p.add_run("Not found")
-
-        p = row[5].paragraphs[0]
-        if r.get("application_links"):
-            add_hyperlink(p, "Apply", r["application_links"][0]["url"])
-        else:
-            p.add_run("Not found")
+        cells = table.add_row().cells
+        cells[0].text = str(i)
+        cells[1].text = r["listing"]["title"]
+        cells[2].text = r["listing"]["last_date"]
+        add_hyperlink(cells[3].paragraphs[0], "Open detail", r["detail_url"])
 
     for r in results:
         doc.add_page_break()
-        doc.add_heading(r["listing"]["title"], 1)
+        doc.add_heading(r.get("post_title") or r["listing"]["title"], 1)
 
-        add_label(doc.add_paragraph(), "Last Date", r["listing"]["last_date"])
-        add_label(doc.add_paragraph(), "Date Extended", r["listing"]["extended"])
+        field(doc, "Last Date", r["listing"]["last_date"])
+        field(doc, "Date Extended", r["listing"]["extended"])
 
         p = doc.add_paragraph()
         p.add_run("SarkariResult detail page: ").bold = True
         add_hyperlink(p, "Open detail", r["detail_url"])
 
-        if r.get("notification_links"):
+        doc.add_heading("Actual detail-page fields", 2)
+        field(doc, "Post / title", r.get("post_title"))
+        field(doc, "Post Date / Update", r.get("post_update"))
+        field(doc, "Short Information", r.get("short_information"))
+        field(doc, "Important Dates", r.get("important_dates"))
+        field(doc, "Application Fee", r.get("application_fee"))
+        field(doc, "Age Limit", r.get("age_limit"))
+        field(doc, "Vacancy Details", r.get("vacancy_details"))
+        field(doc, "Eligibility", r.get("eligibility"))
+        field(doc, "How to Fill / Apply", r.get("how_to_apply"))
+        field(doc, "Selection Process", r.get("selection_process"))
+        field(doc, "Pay Scale / Salary", r.get("pay_scale"))
+        field(doc, "Important Instructions", r.get("important_instructions"))
+
+        doc.add_heading("Action / notification links found on detail page", 2)
+        if not r.get("links"):
+            doc.add_paragraph("No matching action links found.")
+        for x in r.get("links", []):
             p = doc.add_paragraph()
-            p.add_run("Official notification: ").bold = True
-            add_hyperlink(p, r["notification_links"][0]["url"], r["notification_links"][0]["url"])
-        else:
-            add_label(doc.add_paragraph(), "Official notification", "Not found on detail page")
+            p.add_run(f"[{x['domain_class']}] ").bold = True
+            add_hyperlink(p, x["text"], x["url"])
 
-        if r.get("application_links"):
-            p = doc.add_paragraph()
-            p.add_run("Official application: ").bold = True
-            add_hyperlink(p, r["application_links"][0]["url"], r["application_links"][0]["url"])
-        else:
-            add_label(doc.add_paragraph(), "Official application", "Not found on detail page")
+        doc.add_heading("Detected tables", 2)
+        if not r.get("tables"):
+            doc.add_paragraph("No HTML tables detected.")
+        for rows in r.get("tables", []):
+            t = doc.add_table(rows=0, cols=max(len(row) for row in rows))
+            for row in rows:
+                cells = t.add_row().cells
+                for j, value in enumerate(row):
+                    cells[j].text = value
 
-        doc.add_heading("Discovered links", 2)
-        for link in r.get("links", []):
-            p = doc.add_paragraph(style=None)
-            p.add_run(f"[{link['domain_class']}] ").bold = True
-            add_hyperlink(p, link["text"] or link["url"], link["url"])
-
-        doc.add_heading("Detail-page content", 2)
+        doc.add_heading("Raw detail-page content", 2)
         if r.get("detail_text"):
-            # Keep the actual source content. This is the material the next
-            # structured extraction layer will parse.
+            # Keep a bounded copy in the report; structured fields above are the
+            # important output, while raw content makes debugging possible.
             for line in r["detail_text"].splitlines():
                 if line:
                     doc.add_paragraph(line)
         else:
             doc.add_paragraph("Detail page could not be retrieved.")
-
-        if r.get("tables"):
-            doc.add_heading("Tables detected on detail page", 2)
-            for table_data in r["tables"]:
-                t = doc.add_table(rows=0, cols=max(len(x) for x in table_data))
-                for rowdata in table_data:
-                    cells = t.add_row().cells
-                    for j, value in enumerate(rowdata):
-                        cells[j].text = value
-
-        if r.get("error"):
-            add_label(doc.add_paragraph(), "Crawler error", r["error"])
 
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     doc.save(out)
