@@ -39,10 +39,11 @@ def validate_slide_plan(plan: dict, facts: dict) -> list[str]:
         if token not in source_numbers:
             warnings.append(f"Generated numeric token not found in locked facts: {token}")
 
-    urls = re.findall(r"https?://\S+", generated)
-    source_urls = set(re.findall(r"https?://\S+", source))
+    urls = re.findall(r"https?://[^\s\"\'}]+", generated)
+    source_urls = {u.rstrip(".,);]}\"") for u in re.findall(r"https?://[^\s\"\'}]+", source)}
     for url in urls:
-        if url.rstrip(".,)") not in {u.rstrip(".,)") for u in source_urls}:
-            warnings.append(f"Generated URL not found in locked facts: {url}")
+        normalized = url.rstrip(".,);]}\"")
+        if normalized not in source_urls:
+            warnings.append(f"Generated URL not found in locked facts: {normalized}")
 
     return warnings

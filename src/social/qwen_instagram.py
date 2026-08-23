@@ -8,6 +8,7 @@ from src.docx.quality_gate import quality_gate
 from src.llm.ollama_client import OllamaClient
 from src.llm.validator import validate_slide_plan
 from src.llm.slide_quality_gate import slide_quality_gate
+from src.llm.presentation_sanitizer import sanitize_slide_plan
 from src.verify_official import verify_urls, apply_to_job
 
 
@@ -84,12 +85,15 @@ def generate_from_docx(
             if gate["status"] == "FAIL":
                 record["action"] = "BLOCKED: fix source extraction before sending facts to Qwen"
         else:
-            plan = client.generate_slide_plan(facts, slide_count=slide_count)
+            raw_plan = client.generate_slide_plan(facts, slide_count=slide_count)
+            plan = sanitize_slide_plan(raw_plan)
             warnings = validate_slide_plan(plan, facts)
             slide_gate = slide_quality_gate(plan, facts)
+            record["raw_slide_plan"] = raw_plan
             record["slide_plan"] = plan
             record["validation_warnings"] = warnings
             record["slide_quality_gate"] = slide_gate
+            record["presentation_ready"] = slide_gate["status"] == "PASS"
             if slide_gate["status"] == "FAIL":
                 record["action"] = "BLOCKED: slide-level quality gate failed"
                 any_failed = True
@@ -114,6 +118,17 @@ def generate_from_docx(
         "jobs": generated,
     }
     summary_path = output_dir / "qwen_instagram_plans.json"
+    # V1.9.13: presentation-ready copy is separated from audit metadata.
+    if generated:
+        ready = [
+            {"job_index": r["job_index"], "slides": r.get("slide_plan", {}).get("slides", [])}
+            for r in generated
+            if r.get("presentation_ready")
+        ]
+        (output_dir / "instagram_presentation_ready.json").write_text(
+            json.dumps({"version": "1.9.13", "jobs": ready}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # In diagnostic/quality-gate-only mode, return the report normally so callers

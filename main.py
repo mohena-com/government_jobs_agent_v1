@@ -5,6 +5,7 @@ from src.sarkariresult.pipeline import crawl
 from src.report.docx import make_report
 from src.social.instagram import generate_instagram_assets
 from src.social.qwen_instagram import generate_from_docx
+from src.social.qwen_renderer import render_qwen_plan
 
 p = argparse.ArgumentParser(description="SarkariResult crawler + local Qwen Instagram editor")
 p.add_argument("--max-jobs", type=int, default=None)
@@ -23,8 +24,17 @@ p.add_argument("--job-index", type=int, default=None, help="1-based job number t
 p.add_argument("--quality-gate-only", action="store_true", help="Extract facts and run the quality gate without calling Qwen")
 p.add_argument("--allow-qwen-on-failed-gate", action="store_true", help="Do not block Qwen when the quality gate fails (not recommended)")
 p.add_argument("--verify-official", action="store_true", help="Download and verify official notification PDFs before Qwen")
+p.add_argument("--render-qwen", help="Render a Qwen JSON plan after it passes the slide-level gate")
+p.add_argument("--render-output", default="social/rendered", help="Directory for rendered Qwen Instagram slides")
 
 args = p.parse_args()
+
+if args.render_qwen:
+    assets = render_qwen_plan(args.render_qwen, args.render_output, job_index=args.job_index)
+    print(f"Rendered Instagram slides: {len(assets)}")
+    for asset in assets:
+        print(asset)
+    raise SystemExit(0)
 
 if args.docx:
     if not args.qwen and not args.quality_gate_only:
