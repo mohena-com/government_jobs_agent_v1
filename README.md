@@ -27,11 +27,19 @@ Expected reconciled total:
 727 + 110 + 32 + 371 + 765 = 2,005
 
 Known parser losses remain visible as repairs (Mechanical 6→110 and Junior Assistant/Commercial Assistant-II 583→765), while the repaired canonical values are used downstream.
+## Run
 
+```bash
+python3.1 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python3.1 main.py --max-jobs 3
+```
 ## Test
 
 ```bash
-PYTHONPATH=. pytest -q
+python3.1PATH=. pytest -q
 ```
 
 Expected: 25 passed.
@@ -41,13 +49,13 @@ Expected: 25 passed.
 First run verification only:
 
 ```bash
-python3 main.py \
+python3.1 main.py \
   --docx "reports/jobs/03_Rajasthan_RVUNL_for_JE_Junior_Accountant_Junior_Assistant_Commercial_Assistant-II_Common_R_2026-08-23.docx" \
   --qwen \
   --verify-official \
   --quality-gate-only \
   --job-index 1 \
-  --qwen-output social/qwen_v194
+  --qwen-output social/qwen_v199
 ```
 
 Only after `quality_gate_status: PASS` should Qwen generation be enabled.

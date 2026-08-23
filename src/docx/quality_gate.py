@@ -162,6 +162,16 @@ def quality_gate(job: dict, facts: dict) -> dict:
     # V1.9.8: post-specific eligibility is a hard safety requirement.
     _post_fact_quality(facts, errors, suspicious, verification)
 
+    # V1.9.9: reject obvious section contamination that could become polished misinformation.
+    how = _norm(facts.get("how_to_apply"))
+    sel = _norm(facts.get("selection_process"))
+    if how and any(x in how.lower() for x in ("name of company field area of operation", "generation of electricity", "transmission of electricity")):
+        errors.append("Contaminated how_to_apply field detected")
+        suspicious.append("how_to_apply")
+    if sel and any(x in sel.lower() for x in ("name of company field area of operation", "generation of electricity", "transmission of electricity")):
+        errors.append("Contaminated selection_process field detected")
+        suspicious.append("selection_process")
+
     # If every required field is verified and the vacancy table reconciles, PASS.
     # Otherwise the gate blocks Qwen. Candidates and missing fields remain verification work.
     verification_required = bool(verification)

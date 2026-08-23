@@ -35,6 +35,7 @@ def generate_from_docx(
     client = None if quality_gate_only else OllamaClient(host=host, model=model)
     generated = []
     any_failed = False
+    verified_bundle = []
 
     for idx, job in selected:
         facts = to_locked_facts(job)
@@ -58,6 +59,12 @@ def generate_from_docx(
                 if k in authoritative_keys or v not in ("", None, []):
                     facts[k] = v
             facts["official_verification"] = verification
+        # V1.9.9: freeze the exact fact object that passed official reconciliation.
+        # Qwen must never re-read raw DOCX fields after this point.
+        if verify_official:
+            facts = json.loads(json.dumps(facts, ensure_ascii=False))
+            facts['fact_bundle_version'] = '1.9.9'
+            facts['fact_bundle_source'] = 'official_verification'
         gate = quality_gate(job, facts)
         if verify_official:
             gate["official_verification_status"] = verification.get("status") if verification else "NOT_RUN"
@@ -70,6 +77,9 @@ def generate_from_docx(
             # the quality gate. It must remain true whenever suspicious facts exist.
             gate["verification_required"] = bool(gate.get("verification_required") or gate.get("suspicious_fields"))
         any_failed = any_failed or gate["status"] == "FAIL"
+
+        if verify_official:
+            verified_bundle.append({'job_index': idx, 'locked_facts': facts, 'quality_gate': gate, 'official_verification': verification})
 
         record = {
             "job_index": idx,
@@ -96,6 +106,12 @@ def generate_from_docx(
         safe = "".join(c if c.isalnum() else "_" for c in title).strip("_")[:80]
         (output_dir / f"{idx:02d}_{safe}_slide_plan.json").write_text(
             json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    if verify_official:
+        (output_dir / 'verified_fact_bundle.json').write_text(
+            json.dumps({'version': '1.9.9', 'jobs': verified_bundle}, ensure_ascii=False, indent=2),
+            encoding='utf-8'
         )
 
     summary = {

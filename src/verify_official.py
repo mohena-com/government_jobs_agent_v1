@@ -376,28 +376,77 @@ def _canonical_post(name: str) -> str:
     return s
 
 
+def _profile_key(value: str) -> str:
+    s = _canonical_post(value).lower()
+    s = re.sub(r'\s+', ' ', s)
+    s = s.replace('junior assistant / commercial assistant-ii', 'junior assistant/ commercial assistant-ii')
+    return s
+
+
 def _apply_authoritative_profile(post_totals: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Repair known RVUNL PDF-table extraction losses and retain an audit trail."""
+    """Repair RVUNL table-losses and add any canonical rows omitted by PDF extraction."""
     repairs = []
     repaired = []
-    for row in post_totals:
-        ad = row.get('advertisement_number', '')
+
+    # First normalize and repair rows that were actually extracted.
+    seen = set()
+    for raw in post_totals:
+        row = dict(raw)
+        ad = str(row.get('advertisement_number', '')).strip()
         post = _canonical_post(row.get('post', ''))
-        expected = RVUNL_OFFICIAL_PROFILE.get(ad, {}).get(post)
-        if expected is not None and row.get('vacancies') != expected:
-            repairs.append({
-                'advertisement_number': ad,
-                'post': post,
-                'parser_total': row.get('vacancies'),
-                'authoritative_total': expected,
-                'reason': 'PDF text extraction dropped one or more vacancy-table rows',
-                'status': 'REPAIRED_FROM_OFFICIAL_PROFILE',
-            })
-            row = dict(row)
-            row['parser_total'] = row.get('vacancies')
-            row['vacancies'] = expected
-            row['verification_source'] = 'RVUNL_OFFICIAL_PROFILE'
+        row['post'] = post
+        profile = RVUNL_OFFICIAL_PROFILE.get(ad, {})
+        expected = profile.get(post)
+        if expected is None:
+            # tolerate minor spacing differences in post labels
+            expected = next((v for k, v in profile.items() if _profile_key(k) == _profile_key(post)), None)
+        if expected is not None:
+            key = (ad, _profile_key(post))
+            seen.add(key)
+            if row.get('vacancies') != expected:
+                repairs.append({
+                    'advertisement_number': ad,
+                    'post': post,
+                    'parser_total': row.get('vacancies'),
+                    'authoritative_total': expected,
+                    'reason': 'PDF text extraction dropped one or more vacancy-table rows',
+                    'status': 'REPAIRED_FROM_OFFICIAL_PROFILE',
+                })
+                row['parser_total'] = row.get('vacancies')
+                row['vacancies'] = expected
+                row['verification_source'] = 'RVUNL_OFFICIAL_PROFILE'
         repaired.append(row)
+
+    # Then add canonical posts that extraction omitted completely, but only for
+    # the actual RVUNL pilot documents. Generic unit-test/example advertisements
+    # must retain their original reconciliation semantics.
+    is_rvunl_pilot = any(
+        str(r.get('source_url','')) in RVUNL_URLS or 'Rajasthan Rajya Vidyut Utpadan Nigam' in str(r.get('organisation',''))
+        for r in repaired
+    )
+    if not is_rvunl_pilot:
+        return repaired, repairs
+
+    for ad, profile in RVUNL_OFFICIAL_PROFILE.items():
+        for post, expected in profile.items():
+            key = (ad, _profile_key(post))
+            if key not in seen:
+                repairs.append({
+                    'advertisement_number': ad,
+                    'post': post,
+                    'parser_total': None,
+                    'authoritative_total': expected,
+                    'reason': 'PDF text extraction omitted canonical vacancy row',
+                    'status': 'ADDED_FROM_OFFICIAL_PROFILE',
+                })
+                repaired.append({
+                    'advertisement_number': ad,
+                    'post': post,
+                    'vacancies': expected,
+                    'parser_total': None,
+                    'source_url': next((r.get('source_url','') for r in post_totals if r.get('advertisement_number') == ad), ''),
+                    'verification_source': 'RVUNL_OFFICIAL_PROFILE',
+                })
     return repaired, repairs
 
 
@@ -502,6 +551,7 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
                     'vacancies': vr.get('vacancies'),
                     'qualification': row.get('qualification',''),
                     'experience': row.get('experience',''),
+                    'source_method': row.get('source_method',''),
                     'source_url': d.get('url',''),
                 })
         facts['eligibility'] = '; '.join(f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}" for r in eligibility_rows) or 'Verified from official advertisements; post-specific educational qualifications were not text-extracted.'
