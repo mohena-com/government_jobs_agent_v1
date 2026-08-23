@@ -29,7 +29,11 @@ def crawl(max_jobs=None, only=None, published_on: date | None = None):
             if any(k in x["title"].lower() for k in keys)
         ]
 
-    if max_jobs:
+    # When filtering by publication date, do NOT truncate the discovery list
+    # before fetching details. The first N listings may be older jobs with later
+    # deadlines, which previously caused --published-today to return zero even
+    # when newer listings existed further down the page.
+    if max_jobs and published_on is None:
         listings = listings[:max_jobs]
 
     results = []
@@ -58,5 +62,7 @@ def crawl(max_jobs=None, only=None, published_on: date | None = None):
             if published == published_on:
                 filtered.append(item)
         results = filtered
+        if max_jobs:
+            results = results[:max_jobs]
 
     return today, results

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# V1.9.18 — one-command daily Instagram generation.
-# IST date → today's unique listings → exclude yesterday-used jobs →
-# official verification → Qwen → slide QA → rendering.
+# V1.9.20 — daily future-deadline Instagram generation.
+# No duplicate/history filtering for now. Select every crawled job whose
+# application/last date is strictly after today.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -20,23 +20,22 @@ CRAWL_MAX_JOBS="${CRAWL_MAX_JOBS:-1000}"
 SELECTED_JSON="social/today_jobs.json"
 QWEN_ROOT="social/qwen_today_${TODAY}"
 RENDER_ROOT="social/rendered_today_${TODAY}"
-HISTORY="social/agent_usage_history.jsonl"
 RUN_REPORT="social/daily_generation_${TODAY}.json"
-export QWEN_ROOT RENDER_ROOT TODAY
+export QWEN_ROOT RENDER_ROOT TODAY PYTHON_BIN OLLAMA_HOST OLLAMA_MODEL
 
 mkdir -p "$QWEN_ROOT" "$RENDER_ROOT" "social"
 
 echo "============================================================"
 echo "Government Jobs → Instagram | $TODAY_LABEL"
+echo "Rule: LAST DATE > TODAY | duplicate filtering OFF"
 echo "============================================================"
 
-echo "[1/4] Crawling jobs published/updated today..."
-"$PYTHON_BIN" main.py --published-today --max-jobs "$CRAWL_MAX_JOBS"
+echo "[1/4] Crawling all listings with a future last date..."
+"$PYTHON_BIN" main.py --max-jobs "$CRAWL_MAX_JOBS"
 
-echo "[2/4] Selecting unique today's jobs and excluding yesterday-used jobs..."
-"$PYTHON_BIN" scripts/select_today_jobs.py \
+echo "[2/4] Selecting every job whose last/application date is in the future..."
+"$PYTHON_BIN" scripts/select_future_jobs.py \
   --today "$TODAY" \
-  --history "$HISTORY" \
   --output "$SELECTED_JSON"
 
 COUNT="$($PYTHON_BIN - <<'PY'
@@ -50,13 +49,15 @@ if [[ "$COUNT" == "0" ]]; then
   cat > "$RUN_REPORT" <<JSON
 {
   "date": "$TODAY",
+  "selection_rule": "last/application date is strictly after today",
+  "duplicate_filtering": false,
   "selected_count": 0,
   "success_count": 0,
   "failure_count": 0,
   "jobs": []
 }
 JSON
-  echo "No new government jobs published today require Instagram generation."
+  echo "No future-deadline government jobs found."
   exit 0
 fi
 
@@ -69,7 +70,6 @@ import subprocess
 from pathlib import Path
 
 selected = json.load(open('social/today_jobs.json', encoding='utf-8'))['jobs']
-history = Path('social/agent_usage_history.jsonl')
 qwen_root = Path(os.environ['QWEN_ROOT'])
 render_root = Path(os.environ['RENDER_ROOT'])
 host = os.environ.get('OLLAMA_HOST', 'http://webmaster-ai.local:11434')
@@ -90,12 +90,13 @@ for n, row in enumerate(selected, 1):
     item = {
         'job_index': n,
         'title': title,
+        'last_date': row.get('last_date'),
         'docx': row.get('docx'),
         'status': 'FAILED',
         'qwen_output': str(qout),
         'render_output': str(rout),
     }
-    print(f'\n--- {n}/{len(selected)}: {title} ---')
+    print(f'\n--- {n}/{len(selected)}: {title} | last date {row.get("last_date")} ---')
     try:
         cmd = [
             py, 'main.py', '--docx', row['docx'], '--qwen', '--verify-official',
@@ -111,7 +112,7 @@ for n, row in enumerate(selected, 1):
         if job.get('presentation_ready') is not True:
             item['error'] = 'Presentation quality gate failed'
             results.append(item)
-            print(f"BLOCKED: presentation gate failed for {title}; continuing to next job")
+            print(f'BLOCKED: presentation gate failed for {title}; continuing to next job')
             continue
 
         subprocess.run([
@@ -120,18 +121,6 @@ for n, row in enumerate(selected, 1):
         ], check=True)
         item['status'] = 'SUCCESS'
         results.append(item)
-
-        keys = row.get('keys') or []
-        with history.open('a', encoding='utf-8') as f:
-            f.write(json.dumps({
-                'used_date': today,
-                'title': title,
-                'docx': row['docx'],
-                'keys': keys,
-                'qwen_output': str(qout),
-                'render_output': str(rout),
-                'action': job.get('action'),
-            }, ensure_ascii=False) + '\n')
     except subprocess.CalledProcessError as exc:
         item['error'] = f'Command failed with exit code {exc.returncode}'
         results.append(item)
@@ -141,9 +130,10 @@ for n, row in enumerate(selected, 1):
         results.append(item)
         print(f'ERROR: {title}: {exc}; continuing to next job')
 
-Path(os.environ['RENDER_ROOT']).parent.mkdir(parents=True, exist_ok=True)
 report = {
     'date': today,
+    'selection_rule': 'last/application date is strictly after today',
+    'duplicate_filtering': False,
     'selected_count': len(selected),
     'success_count': sum(x['status'] == 'SUCCESS' for x in results),
     'failure_count': sum(x['status'] != 'SUCCESS' for x in results),
@@ -157,4 +147,5 @@ PY
 echo "[4/4] Done."
 echo "Rendered slides: $RENDER_ROOT"
 echo "Qwen plans:       $QWEN_ROOT"
+echo "Selected jobs:    $SELECTED_JSON"
 echo "Run report:       $RUN_REPORT"

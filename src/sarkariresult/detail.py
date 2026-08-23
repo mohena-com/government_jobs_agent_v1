@@ -134,12 +134,19 @@ def extract_structured_page(soup, text):
     if h1:
         result["post_title"] = clean(h1.get_text(" ", strip=True))
 
-    # Common SarkariResult metadata labels.
+    # Common SarkariResult metadata labels. The site has appeared in both
+    # two-line and same-line forms, e.g.
+    #   Post Date / Update: 23 August 2026
+    #   Post Date / Update\n    #   23 August 2026
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        low = line.lower()
-        if "post date / update" in low and i + 1 < len(lines):
-            result["post_update"] = lines[i + 1]
+        low = line.lower().strip()
+        if "post date / update" in low:
+            tail = re.split(r"post\s*date\s*/\s*update\s*[:\-]?", line, maxsplit=1, flags=re.I)
+            if len(tail) == 2 and tail[1].strip():
+                result["post_update"] = tail[1].strip()
+            elif i + 1 < len(lines):
+                result["post_update"] = lines[i + 1].strip()
         if "short information" in low:
             # The short paragraph usually follows the label and before social links.
             vals = []
