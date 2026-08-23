@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
+
+# Allow execution as: python3 scripts/select_today_jobs.py
+# while the repository root is the current working directory.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from src.docx.reader import read_docx
 
