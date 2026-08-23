@@ -40,3 +40,24 @@ def test_quality_gate_blocks_rvunl_like_bad_record():
     assert "organisation" in result["missing_required"]
     assert "total_vacancies" in result["missing_required"]
     assert "age_limit" in result["suspicious_fields"]
+
+def test_quality_gate_blocks_unverified_title_vacancy():
+    job = {"title": "RVUNL Recruitment 2026 Apply Online for 2005 Post"}
+    facts = {
+        "organisation": "Rajasthan Rajya Vidyut Utpadan Nigam Ltd. (RVUNL)",
+        "post": job["title"],
+        "published_date": "05 August 2026",
+        "official_links": [{"label": "Official Notification", "url": "https://example.gov.in/n.pdf"}],
+        "total_vacancies": "",
+        "total_vacancies_candidate": "2005",
+        "title_vacancy_candidate": "2005",
+        "application_start": "",
+        "application_end": "",
+        "application_end_candidate": "25 August 2026",
+        "age_limit": "",
+        "eligibility": "",
+    }
+    result = quality_gate(job, facts)
+    assert result["status"] == "FAIL"
+    assert result["verification_required"] is True
+    assert any("2005" in x for x in result["verification_items"])

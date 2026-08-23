@@ -30,8 +30,16 @@ def quality_gate(job: dict, facts: dict) -> dict:
     errors: list[str] = []
     warnings: list[str] = []
     suspicious: list[str] = []
+    verification: list[str] = []
 
-    for field in REQUIRED:
+    # A job cannot be sent to Qwen unless the core factual fields are present.
+    required = [
+        "organisation", "post", "advertisement_number", "published_date",
+        "total_vacancies", "application_start", "application_end",
+        "age_limit", "eligibility",
+    ]
+
+    for field in required:
         if _is_missing(facts.get(field)):
             errors.append(f"Missing required fact: {field}")
 
@@ -39,35 +47,69 @@ def quality_gate(job: dict, facts: dict) -> dict:
         if _is_missing(facts.get(field)):
             warnings.append(f"Optional fact not extracted: {field}")
 
+    links = facts.get("official_links") or []
+    if not links:
+        errors.append("No official notification link extracted")
+    elif not any(str(x.get("url", "")).startswith("http") for x in links if isinstance(x, dict)):
+        errors.append("Official notification links are present but no usable URL was extracted")
+
+    total = _numeric(facts.get("total_vacancies"))
+    title_candidate = _numeric(facts.get("total_vacancies_candidate") or facts.get("title_vacancy_candidate"))
+    derived = facts.get("derived_vacancy_sum")
+
+    if total is None and title_candidate is not None:
+        warnings.append(f"Title contains candidate vacancy count {title_candidate}; verify against official vacancy table")
+        verification.append(f"Verify total vacancies against official vacancy table; title candidate={title_candidate}")
+    elif total is None:
+        verification.append("Verify total vacancies from official notification")
+
+    if derived is not None and total is not None and derived != total:
+        errors.append(f"Vacancy-row sum {derived} differs from total_vacancies {total}")
+    elif derived is None and total is not None:
+        warnings.append("No post-wise vacancy table total was derived from DOCX; verify against official notification")
+        verification.append("Verify post-wise vacancy total against official notification")
+
+    # Candidates recovered from the document are never silently promoted to verified facts.
+    if _is_missing(facts.get("advertisement_number")):
+        verification.append("Verify advertisement/reference number from official notification")
+    if _is_missing(facts.get("application_start")):
+        verification.append("Verify application start date from official notification")
+    if _is_missing(facts.get("application_end")):
+        candidate = facts.get("application_end_candidate")
+        if not _is_missing(candidate):
+            warnings.append(f"Application end candidate detected: {candidate}; verify against official notification")
+        verification.append("Verify application end date from official notification")
+    if _is_missing(facts.get("age_limit")):
+        verification.append("Verify age limit from official notification")
+    if _is_missing(facts.get("eligibility")):
+        verification.append("Verify educational qualification/experience from official notification")
+
     age = _norm(facts.get("age_limit"))
     if age and any(x in age.lower() for x in ("advt. no", "recruitment online form", "short details of notification", "selection procedure", "pay scale")):
         errors.append("Suspicious age_limit content; field appears contaminated")
         suspicious.append("age_limit")
 
-    title_candidate = _numeric(facts.get("title_vacancy_candidate"))
-    total = _numeric(facts.get("total_vacancies"))
-    derived = facts.get("derived_vacancy_sum")
-    if title_candidate is not None:
-        if total is None:
-            warnings.append(f"Title contains candidate vacancy count {title_candidate}; verify against official vacancy table")
-        elif total != title_candidate:
-            warnings.append(f"Title vacancy count {title_candidate} differs from extracted total {total}")
-    if derived is not None and total is not None and derived != total:
-        warnings.append(f"Vacancy-row sum {derived} differs from total_vacancies {total}")
+    for field in ("application_fee", "eligibility", "selection_process", "pay_scale", "important_dates", "how_to_apply"):
+        value = _norm(facts.get(field))
+        if value and ("Short Details of Notification" in value or "Rajasthan Energy Various Post Recruitment Online Form" in value):
+            errors.append(f"Contaminated {field} field detected")
+            suspicious.append(field)
 
-    links = facts.get("official_links") or []
-    if not links:
-        errors.append("No official links extracted")
-    elif not any("http" in _norm(x.get("url")) for x in links if isinstance(x, dict)):
-        errors.append("Official links are present but no usable URL was extracted")
+    # If every required field is verified and the vacancy table reconciles, PASS.
+    # Otherwise the gate blocks Qwen. Candidates and missing fields remain verification work.
+    verification_required = bool(verification)
+    status = "PASS" if not errors and not verification_required else "FAIL"
+    if verification_required and not errors:
+        warnings.append("Official-notification verification is required before Qwen generation")
 
-    status = "PASS" if not errors else "FAIL"
     return {
         "status": status,
         "errors": errors,
         "warnings": warnings,
-        "suspicious_fields": suspicious,
-        "required_fields": REQUIRED,
-        "missing_required": [f for f in REQUIRED if _is_missing(facts.get(f))],
+        "suspicious_fields": sorted(set(suspicious)),
+        "verification_required": verification_required,
+        "verification_items": verification,
+        "required_fields": required,
+        "missing_required": [f for f in required if _is_missing(facts.get(f))],
         "optional_missing": [f for f in OPTIONAL if _is_missing(facts.get(f))],
     }

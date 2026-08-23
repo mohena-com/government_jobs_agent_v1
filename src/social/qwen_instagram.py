@@ -78,7 +78,9 @@ def generate_from_docx(
     summary_path = output_dir / "qwen_instagram_plans.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if fail_on_quality_gate and any_failed:
+    # In diagnostic/quality-gate-only mode, return the report normally so callers
+    # can inspect the exact extraction and verification failures.
+    if fail_on_quality_gate and any_failed and not quality_gate_only:
         raise RuntimeError("Quality gate failed. Review qwen output JSON; Qwen generation was blocked for failed jobs.")
 
     return summary_path, generated
