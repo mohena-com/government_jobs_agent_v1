@@ -4,6 +4,7 @@ from pathlib import Path
 
 from src.sarkariresult.pipeline import crawl
 from src.report.docx import make_report
+from src.social.instagram import generate_instagram_assets
 
 
 p = argparse.ArgumentParser(
@@ -23,6 +24,18 @@ p.add_argument(
     "--only",
     default=None,
     help="Optional comma-separated title keywords for testing",
+)
+
+p.add_argument(
+    "--instagram",
+    action="store_true",
+    help="Generate 1080x1350 Instagram carousel slides for every job",
+)
+
+p.add_argument(
+    "--social-dir",
+    default="social/instagram",
+    help="Output directory for Instagram carousel assets",
 )
 
 args = p.parse_args()
@@ -72,6 +85,25 @@ for path in job_files:
     print(
         f"  JOB REPORT: {path}"
     )
+
+if args.instagram:
+    assets = generate_instagram_assets(
+        results,
+        Path(args.social_dir),
+    )
+
+    print(
+        f"Instagram carousels generated: {len(assets)}"
+    )
+
+    for asset in assets:
+        print(
+            f"  INSTAGRAM: {asset['directory']}"
+        )
+        for slide in asset["slides"]:
+            print(
+                f"    {slide}"
+            )
 
 
 for r in results:
