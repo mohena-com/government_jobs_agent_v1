@@ -1,146 +1,64 @@
-
 import argparse
 from pathlib import Path
 
 from src.sarkariresult.pipeline import crawl
 from src.report.docx import make_report
 from src.social.instagram import generate_instagram_assets
+from src.social.qwen_instagram import generate_from_docx
 
+p = argparse.ArgumentParser(description="SarkariResult crawler + local Qwen Instagram editor")
+p.add_argument("--max-jobs", type=int, default=None)
+p.add_argument("--only", default=None)
+p.add_argument("--instagram", action="store_true")
+p.add_argument("--social-dir", default="social/instagram")
 
-p = argparse.ArgumentParser(
-    description=(
-        "SarkariResult Latest Jobs only — "
-        "future-date discovery and detail-page crawl"
-    )
-)
-
-p.add_argument(
-    "--max-jobs",
-    type=int,
-    default=None,
-)
-
-p.add_argument(
-    "--only",
-    default=None,
-    help="Optional comma-separated title keywords for testing",
-)
-
-p.add_argument(
-    "--instagram",
-    action="store_true",
-    help="Generate 1080x1350 Instagram carousel slides for every job",
-)
-
-p.add_argument(
-    "--social-dir",
-    default="social/instagram",
-    help="Output directory for Instagram carousel assets",
-)
+# New local-LLM mode.
+p.add_argument("--docx", help="Existing recruitment DOCX to read instead of crawling")
+p.add_argument("--qwen", action="store_true", help="Send DOCX-derived locked facts to local/LAN Ollama Qwen")
+p.add_argument("--ollama-host", default="http://localhost:11434")
+p.add_argument("--ollama-model", default="qwen3:8b")
+p.add_argument("--slide-count", type=int, default=6)
+p.add_argument("--qwen-output", default="social/qwen")
+p.add_argument("--job-index", type=int, default=None, help="1-based job number to send to Qwen (useful for testing)")
 
 args = p.parse_args()
 
+if args.docx:
+    if not args.qwen:
+        from src.docx.reader import read_docx
+        parsed = read_docx(args.docx)
+        print(f"DOCX: {args.docx}")
+        print(f"Jobs detected: {parsed['job_count']}")
+        for i, job in enumerate(parsed["jobs"], 1):
+            print(f"  {i:02d}. {job.get('title') or 'Untitled'}")
+        raise SystemExit(0)
 
-today, results = crawl(
-    max_jobs=args.max_jobs,
-    only=args.only,
-)
-
-
-base_report = (
-    Path("reports")
-    / f"SarkariResult_LatestJobs_{today.isoformat()}.docx"
-)
-
-
-summary_path, job_files = make_report(
-    today,
-    results,
-    base_report,
-)
-
-
-print(
-    "Source: "
-    "https://www.sarkariresult.com/latestjob/"
-)
-
-print(
-    f"Date (IST): {today}"
-)
-
-print(
-    f"Future listings crawled: {len(results)}"
-)
-
-print(
-    f"Summary Report: {summary_path}"
-)
-
-print(
-    f"Job Detail Reports: {len(job_files)}"
-)
-
-for path in job_files:
-    print(
-        f"  JOB REPORT: {path}"
+    summary, records = generate_from_docx(
+        args.docx,
+        args.qwen_output,
+        host=args.ollama_host,
+        model=args.ollama_model,
+        slide_count=args.slide_count,
+        job_index=args.job_index,
     )
+    print(f"DOCX: {args.docx}")
+    print(f"Ollama: {args.ollama_host}")
+    print(f"Model: {args.ollama_model}")
+    print(f"Jobs processed: {len(records)}")
+    print(f"Qwen output: {summary}")
+    raise SystemExit(0)
+
+# Existing V1.6 crawler path remains intact.
+today, results = crawl(max_jobs=args.max_jobs, only=args.only)
+base_report = Path("reports") / f"SarkariResult_LatestJobs_{today.isoformat()}.docx"
+summary_path, job_files = make_report(today, results, base_report)
+
+print("Source: https://www.sarkariresult.com/latestjob/")
+print(f"Date (IST): {today}")
+print(f"Future listings crawled: {len(results)}")
+print(f"Summary Report: {summary_path}")
+print(f"Job Detail Reports: {len(job_files)}")
 
 if args.instagram:
-    assets = generate_instagram_assets(
-        results,
-        Path(args.social_dir),
-    )
-
-    print(
-        f"Instagram carousels generated: {len(assets)}"
-    )
-
-    for asset in assets:
-        print(
-            f"  INSTAGRAM: {asset['directory']}"
-        )
-        for slide in asset["slides"]:
-            print(
-                f"    {slide}"
-            )
-
-
-for r in results:
-
-    notification = (
-        r["notification_links"][0]["url"]
-        if r.get("notification_links")
-        else "NOT FOUND"
-    )
-
-    application = (
-        r["application_links"][0]["url"]
-        if r.get("application_links")
-        else "NOT FOUND"
-    )
-
-    print(
-        "\nJOB:",
-        r["listing"]["title"],
-    )
-
-    print(
-        "DETAIL:",
-        r["detail_url"],
-    )
-
-    print(
-        "OFFICIAL NOTIFICATION:",
-        notification,
-    )
-
-    print(
-        "OFFICIAL APPLICATION:",
-        application,
-    )
-
-    print(
-        "DETAIL OK:",
-        r["detail_ok"],
-    )
+    assets = generate_instagram_assets(results, Path(args.social_dir))
+    print(f"Instagram carousels generated: {len(assets)}")
