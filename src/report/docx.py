@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from docx import Document
 from docx.shared import Inches, Pt
@@ -100,27 +101,116 @@ def add_key_value_table(doc, rows):
         set_cell_text(cells[1], value or "Not found")
         set_cell_shading(cells[0], "EDEDED")
     set_table_borders(table)
-    return table
-
-
-def add_bullets(doc, text):
+    retur
+def _clean_section_lines(text):
+    """Remove social/navigation artefacts and empty lines."""
     if not text:
+        return []
+
+    blocked = {
+        "telegram", "join us", "whatsapp", "instagram",
+        "follow", "x", "image"
+    }
+
+    lines = []
+    for raw in str(text).splitlines():
+        line = " ".join(raw.split()).strip()
+        if not line:
+            continue
+
+        low = line.lower().strip("·-* ")
+
+        # Remove exact social/navigation words.
+        if low in blocked:
+            continue
+
+        # Remove combined forms such as "Telegram Join Us".
+        if any(
+            re.search(rf"\b{re.escape(word)}\b", low)
+            for word in blocked
+        ) and len(low) < 45:
+            continue
+
+        lines.append(line)
+
+    return lines
+
+
+def _compact_label_value_lines(lines):
+    """
+    Combine source lines such as:
+
+        Pay Exam Fee Last Date :
+        24/08/2026
+
+    into:
+
+        Pay Exam Fee Last Date: 24/08/2026
+
+    Also handles:
+        General / OBC / EWS :
+        1000/-
+
+    """
+    result = []
+    i = 0
+
+    label_re = re.compile(
+        r"^(.*?)(?:\s*:\s*)$"
+    )
+
+    while i < len(lines):
+        current = lines[i].strip()
+
+        # A line ending in ':' is a label. Combine it with the next line.
+        if current.endswith(":") and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+
+            # Do not combine a new heading with another heading.
+            if nxt and not nxt.endswith(":"):
+                result.append(
+                    current.rstrip(":").strip() + ": " + nxt
+                )
+                i += 2
+                continue
+
+        # Handle "Label : Value" already on one line.
+        result.append(current)
+        i += 1
+
+    return result
+
+
+def add_compact_section(doc, text, mode="lines"):
+    """
+    Render section content compactly.
+
+    For date/fee sections, label/value pairs are put on the SAME line.
+    Long explanatory instructions remain as bullets.
+    """
+    lines = _clean_section_lines(text)
+
+    if not lines:
         doc.add_paragraph("Not found")
         return
 
-    # Avoid reproducing navigation/footer text. Preserve meaningful source lines.
-    lines = [x.strip() for x in str(text).splitlines() if x.strip()]
-    for line in lines:
-        if len(line) > 400:
-            # Long source paragraphs are split into readable chunks.
-            chunks = [line[i:i+350] for i in range(0, len(line), 350)]
-        else:
-            chunks = [line]
-        for chunk in chunks:
+    compact = _compact_label_value_lines(lines)
+
+    for line in compact:
+        # Remove Markdown emphasis markers that otherwise make the report noisy.
+        line = line.replace("**", "").replace("__", "").strip()
+
+        if mode == "bullets":
             p = doc.add_paragraph(style="List Bullet")
             p.paragraph_format.space_after = Pt(1)
             p.paragraph_format.left_indent = Inches(0.18)
-            p.add_run(chunk)
+            p.add_run(line)
+        else:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(1)
+            p.paragraph_format.keep_together = True
+            p.add_run(line)
+un(chunk)
 
 
 def add_vacancy_table(doc, rows):
@@ -226,25 +316,25 @@ def add_job(doc, job, index):
     ])
 
     add_section_heading(doc, "Important Dates")
-    add_bullets(doc, job.get("important_dates_raw"))
+    add_compact_section(doc, job.get("important_dates_raw"), mode="compact")
 
     add_section_heading(doc, "Application Fee")
-    add_bullets(doc, job.get("application_fee"))
+    add_compact_section(doc, job.get("application_fee"), mode="compact")
 
     add_section_heading(doc, "Vacancy Details")
     add_vacancy_table(doc, job.get("vacancy_rows", []))
 
     add_section_heading(doc, "Eligibility")
-    add_bullets(doc, job.get("eligibility"))
+    add_compact_section(doc, job.get("eligibility"), mode="bullets")
 
     add_section_heading(doc, "Selection Process")
-    add_bullets(doc, job.get("selection_process"))
+    add_compact_section(doc, job.get("selection_process"), mode="bullets")
 
     add_section_heading(doc, "Pay / Salary")
-    add_bullets(doc, job.get("pay_scale"))
+    add_compact_section(doc, job.get("pay_scale"), mode="bullets")
 
     add_section_heading(doc, "How to Apply")
-    add_bullets(doc, job.get("how_to_apply"))
+    add_compact_section(doc, job.get("how_to_apply"), mode="bullets")
 
     add_section_heading(doc, "Official Links")
     add_links(doc, job)

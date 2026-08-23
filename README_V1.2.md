@@ -63,3 +63,15 @@ python main.py --only RCFL --max-jobs 1
 After V1.2 formatting and structured extraction are validated, the next enhancement
 should follow the official notification/application links and resolve actual official
 PDFs and application portals.
+
+
+## V1.3 report cleanup
+
+The report generator now removes social/navigation artefacts such as:
+Telegram, Join Us, WhatsApp, Instagram, Follow, X and image placeholders.
+
+Important Dates and Application Fee are rendered compactly. Source pairs such
+as `Pay Exam Fee Last Date :` followed by `24/08/2026` are rendered as
+`Pay Exam Fee Last Date: 24/08/2026` on one line.
+
+Long eligibility/instruction content remains readable as bullets.
