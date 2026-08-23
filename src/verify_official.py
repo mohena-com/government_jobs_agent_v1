@@ -98,7 +98,7 @@ def _post_sections(text: str) -> list[dict]:
     must be separated from the following table text explicitly.
     """
     heading = re.compile(
-        r'(?:\(i\)|\(ii\)|\(iii\))?\s*Name of Post\s*[:—-]\s*(?:—\s*)?(.+?)(?=\s+In\s+Non-TSP\s+Areas|\s+In\s+TSP\s+Areas|\Z)',
+        r'(?:\(i\)|\(ii\)|\(iii\))?\s*Name of Post\s*[:—-]\s*(?:—\s*)?(.+?)(?=\s+In\s+Non-TSP\s+Areas|\s+In\s+TSP\s+Areas|\s+Educational\s+Qualification|\Z)',
         re.I | re.S,
     )
     positions = list(re.finditer(
@@ -125,6 +125,53 @@ def _post_sections(text: str) -> list[dict]:
                 'total': sum(vals),
             })
     return out
+
+
+_DEEP_HEADINGS = [
+    'Educational Qualification', 'Education Qualification', 'Qualification',
+    'Essential Qualification', 'Eligibility', 'Experience',
+    'Selection Process', 'Selection Procedure', 'Mode of Selection',
+    'Application Fee', 'Examination Fee', 'Fee Details',
+    'How to Apply', 'How To Apply', 'Online Application', 'Application Procedure',
+]
+
+def _section(text: str, headings: list[str], stop_headings: list[str] | None = None, max_chars: int = 5000) -> str:
+    stop = stop_headings or _DEEP_HEADINGS
+    pattern = r'(?im)^(?:\s*[-•●]?\s*)(' + '|'.join(re.escape(x) for x in headings) + r')\s*[:\-–—]?\s*'
+    m = re.search(pattern, text)
+    if not m:
+        pattern = r'(?i)\b(' + '|'.join(re.escape(x) for x in headings) + r')\s*[:\-–—]?\s*'
+        m = re.search(pattern, text)
+    if not m: return ''
+    tail = text[m.end():m.end()+max_chars]
+    stop_pat = r'(?i)\b(?:' + '|'.join(re.escape(x) for x in stop if x not in headings) + r')\s*[:\-–—]?\s*'
+    sm = re.search(stop_pat, tail)
+    if sm: tail = tail[:sm.start()]
+    return _clean(tail)
+
+def _post_eligibility(text: str, post_names: list[str]) -> list[dict]:
+    rows=[]
+    for i,name in enumerate(post_names):
+        m=re.search(re.escape(name), text, re.I)
+        if not m: continue
+        end=len(text)
+        for other in post_names[i+1:]:
+            mm=re.search(re.escape(other), text[m.end():], re.I)
+            if mm: end=min(end,m.end()+mm.start())
+        block=text[m.start():end]
+        qual=_section(block,['Educational Qualification','Education Qualification','Essential Qualification','Qualification','Eligibility'],max_chars=3500)
+        exp=_section(block,['Experience'],max_chars=1800)
+        if qual or exp: rows.append({'post':name,'qualification':qual,'experience':exp})
+    return rows
+
+def _deep_extract(text: str, post_names: list[str]) -> dict:
+    return {
+        'post_eligibility': _post_eligibility(text,post_names),
+        'selection_process': _section(text,['Selection Process','Selection Procedure','Mode of Selection'],max_chars=3000),
+        'application_fee_official': _section(text,['Application Fee','Examination Fee','Fee Details'],max_chars=2200),
+        'how_to_apply': _section(text,['How to Apply','How To Apply','Online Application','Application Procedure'],max_chars=3000),
+        'experience_official': _section(text,['Experience'],max_chars=1800),
+    }
 
 def _classify(text: str, url: str) -> dict:
     m = re.search(r'(?:Advertisement|advertisement)\s+(?:(?:No\.|no\.)|bearing\s+no\.)\s*([A-Za-z0-9./-]+)', text, re.I)
@@ -168,12 +215,14 @@ def _classify(text: str, url: str) -> dict:
     else:
         age, pay = '', ''
     posts = _post_sections(text)
+    post_names = [_canonical_post(p.get('post','')) for p in posts]
+    deep = _deep_extract(text, post_names)
     return {
         'url': url, 'advertisement_number': ad, 'document_type': kind,
         'organisation': org, 'published_date': published,
         'application_start': start, 'application_end': end,
         'age_limit': age, 'post_sections': posts, 'short_notice_total': None,
-        'pay_scale': pay, 'source_pages': len(text)
+        'pay_scale': pay, 'source_pages': len(text), **deep
     }
 
 
@@ -308,7 +357,17 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
         facts['application_end']=verification.get('application_end','')
         facts['age_limit']='; '.join(f"{d['advertisement_number']}: {d['age_limit']}" for d in docs if d.get('age_limit'))
         facts['pay_scale']='; '.join(f"{d['advertisement_number']}: {d['pay_scale']}" for d in docs if d.get('pay_scale'))
-        facts['eligibility']='Verified from official advertisements; post-specific educational qualifications are contained in the corresponding PDF.'
+        eligibility_rows=[]
+        for d in docs:
+            for row in d.get('post_eligibility', []) or []:
+                rr=dict(row); rr['advertisement_number']=d.get('advertisement_number',''); rr['source_url']=d.get('url',''); eligibility_rows.append(rr)
+        facts['post_eligibility'] = eligibility_rows
+        facts['eligibility'] = '; '.join(f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}" for r in eligibility_rows) or 'Verified from official advertisements; post-specific educational qualifications were not text-extracted.'
+        facts['selection_process'] = '; '.join(d.get('selection_process','') for d in docs if d.get('selection_process'))
+        facts['how_to_apply'] = '; '.join(d.get('how_to_apply','') for d in docs if d.get('how_to_apply'))
+        facts['experience'] = '; '.join(d.get('experience_official','') for d in docs if d.get('experience_official'))
+        fee_values=[d.get('application_fee_official','') for d in docs if d.get('application_fee_official')]
+        if fee_values: facts['application_fee']='; '.join(fee_values)
         # Canonical reconciled vacancy structure. Downstream consumers MUST use
         # this list, not raw parser totals from official_verification.documents.
         facts['post_vacancies'] = [
@@ -326,8 +385,6 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
         # Do not carry contaminated DOCX boilerplate into verified facts.
         # Explicitly overwrite these fields because an empty verified value must
         # be allowed to replace an untrusted DOCX value.
-        facts['selection_process'] = ''
-        facts['how_to_apply'] = ''
         facts['important_dates']=f"Application window: {verification.get('application_start','')} to {verification.get('application_end','')}" if verification.get('application_start') and verification.get('application_end') else ''
         facts['official_links']=[{'label':f"Official Notification {d['advertisement_number']}",'url':d['url']} for d in docs]
         facts['official_verification']=verification

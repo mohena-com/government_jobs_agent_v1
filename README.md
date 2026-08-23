@@ -1,65 +1,57 @@
-# SarkariResult Latest Jobs — Focused V1
+# SarkariResult Latest Jobs — V1.9.4
 
-This version intentionally contains **only one source**:
+V1.9.4 adds **Official PDF Deep Fact Extraction** on top of V1.9.3.
 
-https://www.sarkariresult.com/latestjob/
+Pipeline:
 
-UPSC, SSC, RRB, Employment News, NCS and other sources are NOT included.
+DOCX → official PDF verification → canonical vacancy reconciliation → deep official fact extraction → quality gate → Qwen
 
-## Current scope
+Qwen remains blocked until the quality gate passes.
 
-1. Open SarkariResult Latest Jobs.
-2. Discover job listing links.
-3. Parse each listing's Last Date.
-4. Keep only listings with Last Date strictly later than today's date in IST.
-5. Follow each retained listing to its individual SarkariResult detail URL.
-6. Extract the detail page's visible text, HTML tables and relevant hyperlinks.
-7. Identify candidate Notification / Apply Online / Official Website links.
-8. Classify links as SarkariResult, likely official government/institution, or third-party.
-9. Generate a report showing the actual detail-page content and discovered links.
+## New V1.9.4 capabilities
 
-**No enrichment of qualification, age, salary, vacancies, etc. is attempted yet.**
-That is intentional. First we prove that the crawler reliably goes from the
-latest-job index to every individual job-detail page.
+- Post-wise educational qualification extraction from official notification text.
+- Post-wise experience extraction where explicitly present.
+- Official selection-process extraction.
+- Official application-fee extraction.
+- Official how-to-apply/application-procedure extraction.
+- Canonical `post_vacancies` remains the only downstream vacancy source.
+- `raw_post_vacancies` remains audit-only.
+- Contaminated SarkariResult boilerplate is never restored after official verification.
+- Quality gate rejects a PASS when official verification succeeds but no post-wise eligibility can be extracted.
 
-## Run
+## RVUNL pilot
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+Expected reconciled total:
 
-python main.py --max-jobs 3
-```
+727 + 110 + 32 + 371 + 765 = 2,005
 
-For targeted debugging:
+Known parser losses remain visible as repairs (Mechanical 6→110 and Junior Assistant/Commercial Assistant-II 583→765), while the repaired canonical values are used downstream.
+
+## Test
 
 ```bash
-python main.py --only "RCFL,AAI,UPSC"
+PYTHONPATH=. pytest -q
 ```
 
-The `--only` option is only a test filter; UPSC is NOT a separate source.
+Expected: 25 passed.
 
-## Output
+## RVUNL run
 
-```text
-reports/SarkariResult_LatestJobs_YYYY-MM-DD.docx
+First run verification only:
+
+```bash
+python3 main.py \
+  --docx "reports/jobs/03_Rajasthan_RVUNL_for_JE_Junior_Accountant_Junior_Assistant_Commercial_Assistant-II_Common_R_2026-08-23.docx" \
+  --qwen \
+  --verify-official \
+  --quality-gate-only \
+  --job-index 1 \
+  --qwen-output social/qwen_v194
 ```
 
-The report should contain, per job:
+Only after `quality_gate_status: PASS` should Qwen generation be enabled.
 
-- SarkariResult listing title
-- Last date
-- SarkariResult detail-page URL
-- full visible detail-page content
-- tables detected on the detail page
-- discovered links
-- candidate official notification
-- candidate official application
+## Note
 
-If an official link cannot be found, it says `Not found`; it is never invented.
-
-## Next phase
-
-Only after this source traversal is working reliably will we add structured
-field extraction and then official-notification crawling.
+Official PDF downloads require network access from the machine running the agent. If the government PDF host is temporarily unreachable, the verifier records a download error and blocks Qwen rather than fabricating facts.

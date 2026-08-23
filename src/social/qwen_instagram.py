@@ -52,7 +52,7 @@ def generate_from_docx(
                 'age_limit', 'pay_scale', 'eligibility', 'selection_process',
                 'how_to_apply', 'important_dates', 'official_links',
                 'official_verification', 'post_vacancies', 'raw_post_vacancies',
-                'derived_vacancy_sum',
+                'derived_vacancy_sum', 'post_eligibility', 'experience',
             }
             for k, v in verified_facts.items():
                 if k in authoritative_keys or v not in ("", None, []):

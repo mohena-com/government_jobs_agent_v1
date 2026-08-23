@@ -110,3 +110,41 @@ def test_v192_never_passes_when_authoritative_total_does_not_reconcile():
     ja['post_sections'] = ja['post_sections'][:1]
     r = reconcile([short, ja, je], [])
     assert r['status'] == 'FAIL'
+
+
+def test_v194_deep_extraction_from_official_ad_text():
+    text = '''
+    Rajasthan Rajya Vidyut Utpadan Nigam Ltd. (RVUNL)
+    August 04, 2026
+    Advertisement No. RVUN/Rectt.-2026-27/03
+    Name of Post:- Junior Accountant
+    In Non-TSP Areas
+    RVUN
+    Total 371
+    Educational Qualification: Bachelor Degree in Commerce OR IPCC / Intermediate Exam Passed OR MBA / PG Diploma in Business Management OR M.Com.
+    Experience: Relevant experience not required.
+    Name of Post:- Junior Assistant/ Commercial Assistant-II
+    In Non-TSP Areas
+    RVUN
+    Total 765
+    Educational Qualification: 10+2 Intermediate Exam from Any Recognized Board in India and computer qualification.
+    Selection Process: Written Examination followed by document verification.
+    Application Fee: General / EWS: Rs. 1000/-; SC / ST / PH: Rs. 500/-.
+    How to Apply: Apply online through the official recruitment portal.
+    '''
+    d = _classify(text, 'https://example/ja.pdf')
+    assert d['selection_process']
+    assert d['application_fee_official']
+    assert d['how_to_apply']
+    assert len(d['post_eligibility']) >= 1
+
+
+def test_v194_deep_extraction_is_conservative():
+    text = '''
+    Rajasthan Rajya Vidyut Utpadan Nigam Ltd. (RVUNL)
+    Advertisement No. RVUN/Rectt.-2026-27/03
+    Junior Accountant
+    Read the notification for eligibility and selection procedure.
+    '''
+    d = _classify(text, 'https://example/ja.pdf')
+    assert d['post_eligibility'] == []
