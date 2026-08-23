@@ -1,36 +1,64 @@
-import os,yaml
+import argparse, os, yaml
 from pathlib import Path
-from datetime import datetime,timedelta,timezone
 from dotenv import load_dotenv
-from src.discovery.sources import build_sources
-from src.extraction.pdf import extract_pdf_text
-from src.extraction.deterministic import extract
-from src.extraction.ai import extract_with_openai
-from src.database.db import connect,init_db,upsert,all_recruitments
-from src.reporting.docx_report import build_report
-from src.verification.verifier import verify
-from src.utils.http import get,is_pdf_response,safe_filename,sha256_bytes
+
+from src.pdf.download import download_pdf
+from src.pdf.pages import read_pages
+from src.extract.segments import find_segments
+from src.extract.fields import extract_segment
+from src.extract.ai_validate import ai_validate
+from src.validate.rules import validate
+from src.report.docx import make_report
+from src.db.store import save
+
 load_dotenv()
-def run(report_only=False):
-    with open('config/sources.yaml') as f:cfg=yaml.safe_load(f)
-    with open('config/settings.yaml') as f:settings=yaml.safe_load(f)
-    c=connect(os.getenv('DATABASE_PATH','data/recruitment.db'));init_db(c)
-    if not report_only:
-        now=datetime.now(timezone.utc);since=now-timedelta(hours=int(os.getenv('LOOKBACK_HOURS','24')))
-        for s in build_sources(cfg):
-            try:cands=s.discover(since,now)
-            except Exception as e:print('[WARN]',s.config['name'],e);continue
-            for cand in cands:
-                text='';doc_hash='';doc_path=''
-                if cand.notification_url:
-                    try:
-                        r=get(cand.notification_url);r.raise_for_status()
-                        if is_pdf_response(r):
-                            Path(os.getenv('DOCUMENT_DIR','data/documents')).mkdir(parents=True,exist_ok=True);doc_path=str(Path(os.getenv('DOCUMENT_DIR','data/documents'))/safe_filename(r.url));Path(doc_path).write_bytes(r.content);doc_hash=sha256_bytes(r.content);text=extract_pdf_text(doc_path)
-                    except Exception as e:print('[WARN] document',e)
-                rec=extract(text,cand)
-                if text and os.getenv('OPENAI_API_KEY'):
-                    try: rec=extract_with_openai(text,cand)
-                    except Exception as e:print('[WARN] AI extraction',e)
-                rec.notification_url=rec.notification_url or cand.notification_url;rec.application_url=rec.application_url or cand.application_url;rec.official_source_url=rec.official_source_url or cand.source_url;rec.source_document=doc_path;rec.document_hash=doc_hash;rec=verify(rec,settings.get('additional_trusted_domains',[]),settings.get('trusted_suffixes',[]));upsert(c,rec)
-    records=all_recruitments(c);path=Path(os.getenv('REPORT_DIR','reports'))/f"Government_Jobs_Report_{datetime.now().strftime('%Y-%m-%d')}.docx";build_report(records,path);print('REPORT=',path);print('RECORDS=',len(records));return path
+
+def load_cfg():
+    with open("config/upsc.yaml", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+def run(advt):
+    cfg = load_cfg()
+    spec = cfg["advertisements"][str(advt)]
+    data_dir = Path(os.getenv("DATA_DIR", "data"))
+
+    pdf_path = data_dir / "raw" / f"UPSC_Advt_{advt}_2026.pdf"
+    _, sha = download_pdf(spec["pdf_url"], pdf_path)
+
+    pages = read_pages(pdf_path)
+    segments = find_segments(pages)
+
+    records = []
+    for seg in segments:
+        r = extract_segment(seg, spec["number"], spec["pdf_url"])
+        # AI is a second-pass validator, not the primary parser.
+        try:
+            r = ai_validate(r, seg["text"])
+        except Exception as e:
+            r.warnings.append(f"AI validation unavailable: {e}")
+        records.append(r)
+
+    global_warnings = validate(records)
+    for r in records:
+        r.warnings.extend(global_warnings)
+
+    save(data_dir / "upsc.sqlite", spec["number"], records)
+
+    report = Path(os.getenv("REPORT_DIR", "reports")) / f"UPSC_Advt_{advt}_2026_Deep_Report.docx"
+    make_report(spec["number"], records, report)
+
+    print(f"Advertisement: {spec['number']}")
+    print(f"PDF SHA256: {sha}")
+    print(f"Pages: {len(pages)}")
+    print(f"Recruitment sections detected: {len(records)}")
+    print(f"Report: {report}")
+    for i, r in enumerate(records, 1):
+        print(f"{i:02d}. {r.vacancy_no} | {r.post_title or 'NOT EXTRACTED'} | {r.total_vacancies or '?'} | {r.confidence:.0%}")
+
+    return report
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--advt", default="09", choices=["09","51"])
+    args = parser.parse_args()
+    run(args.advt)

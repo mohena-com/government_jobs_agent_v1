@@ -1,19 +1,66 @@
-from typing import Optional
-from datetime import date
+from __future__ import annotations
 from pydantic import BaseModel, Field
-class Candidate(BaseModel):
-    source_name:str; source_url:str; title:str=''; organisation:str=''; post:str=''
-    published_date:Optional[date]=None; last_date:Optional[date]=None
-    notification_url:str=''; application_url:str=''; discovery_text:str=''
+from typing import Optional
+
+class Provenance(BaseModel):
+    field: str
+    page_start: int
+    page_end: int
+    evidence: str = ""
+
+class Reservation(BaseModel):
+    ur: Optional[int] = None
+    ews: Optional[int] = None
+    obc: Optional[int] = None
+    sc: Optional[int] = None
+    st: Optional[int] = None
+    pwbd: Optional[int] = None
+    ex_servicemen: Optional[int] = None
+    other: str = ""
+
 class Recruitment(BaseModel):
-    organisation:str=''; ministry_department:str=''; recruiting_body:str=''; post_title:str=''
-    vacancies_total:Optional[int]=None; advertisement_number:str=''; notification_number:str=''
-    publication_date:Optional[date]=None; updated_date:Optional[date]=None
-    application_start_date:Optional[date]=None; application_end_date:Optional[date]=None
-    qualification:str=''; experience:str=''; age_limit:str=''; age_relaxation:str=''
-    pay_scale:str=''; pay_level:str=''; salary:str=''; category_requirements:str=''; application_fee:str=''
-    application_url:str=''; notification_url:str=''; official_source_url:str=''; official_domain:str=''
-    important_instructions:list[str]=Field(default_factory=list); selection_process:str=''; job_location:str=''
-    source_name:str=''; source_verified:bool=False; extraction_confidence:float=0.0
-    fingerprint:str=''; document_hash:str=''; source_document:str=''; notes:str=''
-    def as_dict(self): return self.model_dump(mode='json')
+    advertisement_no: str
+    vacancy_no: str = ""
+    post_title: str = ""
+    ministry: str = ""
+    department: str = ""
+    organisation: str = ""
+    total_vacancies: Optional[int] = None
+    reservation: Reservation = Field(default_factory=Reservation)
+
+    classification: str = ""
+    service_status: str = ""
+    pay_level: str = ""
+    pay_scale: str = ""
+    salary: str = ""
+    age_limit: str = ""
+    age_relaxation: str = ""
+    essential_qualification: str = ""
+    desirable_qualification: str = ""
+    essential_experience: str = ""
+    desirable_experience: str = ""
+    duties: str = ""
+    headquarters: str = ""
+    posting: str = ""
+    probation: str = ""
+    service_liability: str = ""
+    pwbd_suitability: str = ""
+    selection_process: str = ""
+    application_start: str = ""
+    application_end: str = ""
+    application_fee: str = ""
+    application_mode: str = "Online"
+    application_url: str = "https://upsconline.nic.in/ora/"
+    notification_url: str = ""
+    important_instructions: str = ""
+    contact: str = ""
+
+    pages_start: Optional[int] = None
+    pages_end: Optional[int] = None
+    confidence: float = 0.0
+    provenance: list[Provenance] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+class Page(BaseModel):
+    number: int
+    text: str
