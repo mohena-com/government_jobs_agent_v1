@@ -1,5 +1,16 @@
+import re
+from pathlib import Path
+
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
+
 # =========================================================
-# REMOVE SOCIAL / NAVIGATION GARBAGE
+# SOCIAL / NAVIGATION GARBAGE
 # =========================================================
 
 SOCIAL_GARBAGE = {
@@ -17,9 +28,6 @@ def clean_report_value(value):
     """
     Remove social-media/navigation artefacts that sometimes
     leak from SarkariResult HTML into structured fields.
-
-    This is applied at report-generation time as a final
-    safety layer.
     """
 
     if value is None:
@@ -39,26 +47,1340 @@ def clean_report_value(value):
         # Remove source bullet characters.
         line = line.lstrip("·•*- ").strip()
 
-        # Exact garbage line.
-        if line.lower() in SOCIAL_GARBAGE:
+        if not line:
             continue
 
-        # Remove lines containing only social/navigation text.
-        low = line.lower()
+        low = line.lower().strip()
 
+        # Exact garbage.
+        if low in SOCIAL_GARBAGE:
+            continue
+
+        # Telegram / WhatsApp / Instagram etc.
         if (
             "telegram" in low
             or "whatsapp" in low
             or "instagram" in low
-        ) and len(line) < 80:
+        ) and len(line) < 100:
             continue
 
+        # Join Us / Follow.
         if (
             low.startswith("join us")
             or low.startswith("follow")
-        ) and len(line) < 80:
+        ) and len(line) < 100:
             continue
 
         cleaned_lines.append(line)
 
     return "\n".join(cleaned_lines).strip()
+
+
+# =========================================================
+# HYPERLINK
+# =========================================================
+
+def add_hyperlink(paragraph, text, url):
+
+    if not url:
+        return
+
+    rid = paragraph.part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+
+    link = OxmlElement("w:hyperlink")
+
+    link.set(
+        qn("r:id"),
+        rid
+    )
+
+    run = OxmlElement("w:r")
+
+    rPr = OxmlElement("w:rPr")
+
+    color = OxmlElement("w:color")
+
+    color.set(
+        qn("w:val"),
+        "0563C1"
+    )
+
+    rPr.append(color)
+
+    underline = OxmlElement("w:u")
+
+    underline.set(
+        qn("w:val"),
+        "single"
+    )
+
+    rPr.append(underline)
+
+    run.append(rPr)
+
+    text_node = OxmlElement("w:t")
+
+    text_node.text = text
+
+    run.append(text_node)
+
+    link.append(run)
+
+    paragraph._p.append(link)
+
+
+# =========================================================
+# CELL FORMATTING
+# =========================================================
+
+def set_cell_text(
+    cell,
+    text,
+    bold=False
+):
+
+    cell.text = ""
+
+    cleaned = clean_report_value(
+        text
+    )
+
+    if not cleaned:
+        cleaned = "Not found"
+
+    paragraph = cell.paragraphs[0]
+
+    paragraph.paragraph_format.space_after = Pt(0)
+
+    run = paragraph.add_run(
+        cleaned
+    )
+
+    run.bold = bold
+
+    run.font.size = Pt(8.5)
+
+    cell.vertical_alignment = (
+        WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    )
+
+
+def set_repeat_table_header(row):
+
+    trPr = row._tr.get_or_add_trPr()
+
+    tblHeader = OxmlElement(
+        "w:tblHeader"
+    )
+
+    tblHeader.set(
+        qn("w:val"),
+        "true"
+    )
+
+    trPr.append(
+        tblHeader
+    )
+
+
+def set_cell_shading(
+    cell,
+    fill
+):
+
+    tcPr = cell._tc.get_or_add_tcPr()
+
+    shd = OxmlElement(
+        "w:shd"
+    )
+
+    shd.set(
+        qn("w:fill"),
+        fill
+    )
+
+    tcPr.append(
+        shd
+    )
+
+
+def set_table_borders(
+    table
+):
+
+    tbl = table._tbl
+
+    tblPr = tbl.tblPr
+
+    borders = tblPr.first_child_found_in(
+        "w:tblBorders"
+    )
+
+    if borders is None:
+
+        borders = OxmlElement(
+            "w:tblBorders"
+        )
+
+        tblPr.append(
+            borders
+        )
+
+    for edge in (
+        "top",
+        "left",
+        "bottom",
+        "right",
+        "insideH",
+        "insideV",
+    ):
+
+        tag = "w:" + edge
+
+        element = borders.find(
+            qn(tag)
+        )
+
+        if element is None:
+
+            element = OxmlElement(
+                tag
+            )
+
+            borders.append(
+                element
+            )
+
+        element.set(
+            qn("w:val"),
+            "single"
+        )
+
+        element.set(
+            qn("w:sz"),
+            "4"
+        )
+
+        element.set(
+            qn("w:space"),
+            "0"
+        )
+
+        element.set(
+            qn("w:color"),
+            "B7B7B7"
+        )
+
+
+# =========================================================
+# SECTION HEADING
+# =========================================================
+
+def add_section_heading(
+    doc,
+    text
+):
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.paragraph_format.space_before = Pt(6)
+
+    paragraph.paragraph_format.space_after = Pt(3)
+
+    run = paragraph.add_run(
+        text.upper()
+    )
+
+    run.bold = True
+
+    run.font.size = Pt(10)
+
+    return paragraph
+
+
+# =========================================================
+# KEY / VALUE TABLE
+# =========================================================
+
+def add_key_value_table(
+    doc,
+    rows
+):
+
+    table = doc.add_table(
+        rows=0,
+        cols=2
+    )
+
+    table.alignment = (
+        WD_TABLE_ALIGNMENT.CENTER
+    )
+
+    table.autofit = True
+
+    for label, value in rows:
+
+        cells = table.add_row().cells
+
+        set_cell_text(
+            cells[0],
+            label,
+            True
+        )
+
+        set_cell_text(
+            cells[1],
+            value
+            or "Not found"
+        )
+
+        set_cell_shading(
+            cells[0],
+            "EDEDED"
+        )
+
+    set_table_borders(
+        table
+    )
+
+    return table
+
+
+# =========================================================
+# CLEAN SECTION LINES
+# =========================================================
+
+def _clean_section_lines(
+    text
+):
+
+    if not text:
+        return []
+
+    lines = []
+
+    for raw in str(text).splitlines():
+
+        line = raw.strip()
+
+        if not line:
+            continue
+
+        # Remove source bullets.
+        line = line.lstrip(
+            "·•*- "
+        ).strip()
+
+        if not line:
+            continue
+
+        # Remove social/navigation garbage.
+        cleaned = clean_report_value(
+            line
+        )
+
+        if not cleaned:
+            continue
+
+        lines.append(
+            cleaned
+        )
+
+    return lines
+
+
+# =========================================================
+# COMBINE LABEL / VALUE
+# =========================================================
+
+def _compact_label_value_lines(
+    lines
+):
+
+    """
+    Converts:
+
+        Pay Exam Fee Last Date :
+        24/08/2026
+
+    into:
+
+        Pay Exam Fee Last Date: 24/08/2026
+    """
+
+    result = []
+
+    i = 0
+
+    while i < len(lines):
+
+        current = lines[i].strip()
+
+        if (
+            current.endswith(":")
+            and i + 1 < len(lines)
+        ):
+
+            next_line = lines[
+                i + 1
+            ].strip()
+
+            if (
+                next_line
+                and not next_line.endswith(":")
+            ):
+
+                result.append(
+                    current.rstrip(":").strip()
+                    + ": "
+                    + next_line
+                )
+
+                i += 2
+
+                continue
+
+        result.append(
+            current
+        )
+
+        i += 1
+
+    return result
+
+
+# =========================================================
+# COMPACT SECTION
+# =========================================================
+
+def add_compact_section(
+    doc,
+    text,
+    mode="lines"
+):
+
+    lines = _clean_section_lines(
+        text
+    )
+
+    if not lines:
+
+        doc.add_paragraph(
+            "Not found"
+        )
+
+        return
+
+    compact = _compact_label_value_lines(
+        lines
+    )
+
+    for line in compact:
+
+        line = (
+            line
+            .replace("**", "")
+            .replace("__", "")
+            .strip()
+        )
+
+        line = clean_report_value(
+            line
+        )
+
+        if not line:
+            continue
+
+        # -------------------------------------------------
+        # ELIGIBILITY MODE
+        # -------------------------------------------------
+
+        if mode == "eligibility":
+
+            paragraph = doc.add_paragraph()
+
+            paragraph.paragraph_format.space_after = Pt(2)
+
+            paragraph.paragraph_format.keep_together = True
+
+            if re.match(
+                r"^Management Trainee\s*\(",
+                line,
+                re.I
+            ):
+
+                run = paragraph.add_run(
+                    line
+                )
+
+                run.bold = True
+
+                run.font.size = Pt(9)
+
+            else:
+
+                paragraph.paragraph_format.left_indent = Inches(
+                    0.18
+                )
+
+                paragraph.add_run(
+                    line
+                )
+
+        # -------------------------------------------------
+        # BULLET MODE
+        # -------------------------------------------------
+
+        elif mode == "bullets":
+
+            paragraph = doc.add_paragraph(
+                style="List Bullet"
+            )
+
+            paragraph.paragraph_format.space_after = Pt(1)
+
+            paragraph.paragraph_format.left_indent = Inches(
+                0.18
+            )
+
+            paragraph.add_run(
+                line
+            )
+
+        # -------------------------------------------------
+        # COMPACT / NORMAL MODE
+        # -------------------------------------------------
+
+        else:
+
+            paragraph = doc.add_paragraph()
+
+            paragraph.paragraph_format.space_after = Pt(1)
+
+            paragraph.paragraph_format.keep_together = True
+
+            paragraph.add_run(
+                line
+            )
+
+
+# =========================================================
+# VACANCY TABLE
+# =========================================================
+
+def add_vacancy_table(
+    doc,
+    rows
+):
+
+    if not rows:
+
+        doc.add_paragraph(
+            "No structured vacancy table detected."
+        )
+
+        return
+
+    table = doc.add_table(
+        rows=1,
+        cols=2
+    )
+
+    table.alignment = (
+        WD_TABLE_ALIGNMENT.CENTER
+    )
+
+    table.autofit = True
+
+    header = table.rows[0]
+
+    set_repeat_table_header(
+        header
+    )
+
+    set_cell_text(
+        header.cells[0],
+        "Post",
+        True
+    )
+
+    set_cell_text(
+        header.cells[1],
+        "Vacancies",
+        True
+    )
+
+    set_cell_shading(
+        header.cells[0],
+        "D9EAF7"
+    )
+
+    set_cell_shading(
+        header.cells[1],
+        "D9EAF7"
+    )
+
+    for row in rows:
+
+        cells = table.add_row().cells
+
+        set_cell_text(
+            cells[0],
+            row.get(
+                "post_name",
+                ""
+            )
+        )
+
+        set_cell_text(
+            cells[1],
+            row.get(
+                "vacancies",
+                ""
+            )
+        )
+
+    set_table_borders(
+        table
+    )
+
+
+# =========================================================
+# OFFICIAL LINKS
+# =========================================================
+
+def add_links(
+    doc,
+    job
+):
+
+    links = []
+
+    # -----------------------------------------------------
+    # Application links
+    # -----------------------------------------------------
+
+    for link in job.get(
+        "application_links",
+        []
+    ):
+
+        url = link.get(
+            "url"
+        )
+
+        if url:
+
+            links.append(
+                (
+                    "Apply Online",
+                    url
+                )
+            )
+
+    # -----------------------------------------------------
+    # Notification links
+    # -----------------------------------------------------
+
+    for link in job.get(
+        "notification_links",
+        []
+    ):
+
+        url = link.get(
+            "url"
+        )
+
+        if url:
+
+            links.append(
+                (
+                    "Official Notification",
+                    url
+                )
+            )
+
+    # -----------------------------------------------------
+    # Remove duplicates
+    # -----------------------------------------------------
+
+    unique = []
+
+    seen = set()
+
+    for label, url in links:
+
+        key = (
+            label,
+            url
+        )
+
+        if key not in seen:
+
+            seen.add(
+                key
+            )
+
+            unique.append(
+                (
+                    label,
+                    url
+                )
+            )
+
+    # -----------------------------------------------------
+    # Official candidates
+    # -----------------------------------------------------
+
+    existing_urls = {
+        url
+        for _, url in unique
+    }
+
+    for link in job.get(
+        "official_candidates",
+        []
+    ):
+
+        url = link.get(
+            "url"
+        )
+
+        if (
+            url
+            and url not in existing_urls
+        ):
+
+            unique.append(
+                (
+                    link.get(
+                        "text"
+                    )
+                    or "Official Website",
+                    url
+                )
+            )
+
+            existing_urls.add(
+                url
+            )
+
+    # -----------------------------------------------------
+    # No links
+    # -----------------------------------------------------
+
+    if not unique:
+
+        doc.add_paragraph(
+            "No external application/notification link detected."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # LINK TABLE
+    # -----------------------------------------------------
+
+    table = doc.add_table(
+        rows=1,
+        cols=2
+    )
+
+    table.alignment = (
+        WD_TABLE_ALIGNMENT.CENTER
+    )
+
+    header = table.rows[0]
+
+    set_repeat_table_header(
+        header
+    )
+
+    set_cell_text(
+        header.cells[0],
+        "Type",
+        True
+    )
+
+    set_cell_text(
+        header.cells[1],
+        "URL",
+        True
+    )
+
+    set_cell_shading(
+        header.cells[0],
+        "D9EAF7"
+    )
+
+    set_cell_shading(
+        header.cells[1],
+        "D9EAF7"
+    )
+
+    # -----------------------------------------------------
+    # ACTUAL URL
+    # -----------------------------------------------------
+
+    for label, url in unique:
+
+        cells = table.add_row().cells
+
+        set_cell_text(
+            cells[0],
+            label,
+            True
+        )
+
+        cells[1].text = ""
+
+        paragraph = cells[
+            1
+        ].paragraphs[0]
+
+        # IMPORTANT:
+        # Display the actual URL.
+        add_hyperlink(
+            paragraph,
+            url,
+            url
+        )
+
+        paragraph.paragraph_format.space_after = Pt(0)
+
+    set_table_borders(
+        table
+    )
+
+
+# =========================================================
+# ONE JOB
+# =========================================================
+
+def add_job(
+    doc,
+    job,
+    index
+):
+
+    listing = job.get(
+        "listing",
+        {}
+    )
+
+    title = (
+        job.get(
+            "post_title"
+        )
+        or listing.get(
+            "title"
+        )
+        or "Recruitment Notice"
+    )
+
+    # New page for every recruitment.
+    if index > 1:
+
+        doc.add_page_break()
+
+    # -----------------------------------------------------
+    # TITLE
+    # -----------------------------------------------------
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    run = paragraph.add_run(
+        title
+    )
+
+    run.bold = True
+
+    run.font.size = Pt(15)
+
+    # -----------------------------------------------------
+    # ORGANISATION
+    # -----------------------------------------------------
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    run = paragraph.add_run(
+        clean_report_value(
+            job.get(
+                "organisation"
+            )
+        )
+        or "Organisation not identified"
+    )
+
+    run.bold = True
+
+    run.font.size = Pt(10)
+
+    # -----------------------------------------------------
+    # DEADLINE
+    # -----------------------------------------------------
+
+    deadline = (
+        job.get(
+            "application_end"
+        )
+        or listing.get(
+            "last_date"
+        )
+        or "Not found"
+    )
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    run = paragraph.add_run(
+        "APPLICATION DEADLINE: "
+        + clean_report_value(
+            deadline
+        )
+    )
+
+    run.bold = True
+
+    run.font.size = Pt(10)
+
+    # -----------------------------------------------------
+    # KEY INFORMATION
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Key Information"
+    )
+
+    add_key_value_table(
+        doc,
+        [
+            (
+                "Advertisement / Reference No.",
+                job.get(
+                    "advertisement_number"
+                ),
+            ),
+            (
+                "Published / Updated",
+                job.get(
+                    "post_update"
+                ),
+            ),
+            (
+                "Total Vacancies",
+                job.get(
+                    "total_vacancies"
+                ),
+            ),
+            (
+                "Application Start",
+                job.get(
+                    "application_start"
+                ),
+            ),
+            (
+                "Application End",
+                job.get(
+                    "application_end"
+                ),
+            ),
+            (
+                "Age Limit",
+                job.get(
+                    "age_limit"
+                ),
+            ),
+        ],
+    )
+
+    # -----------------------------------------------------
+    # IMPORTANT DATES
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Important Dates"
+    )
+
+    add_compact_section(
+        doc,
+        job.get(
+            "important_dates_raw"
+        ),
+        mode="compact"
+    )
+
+    # -----------------------------------------------------
+    # APPLICATION FEE
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Application Fee"
+    )
+
+    add_compact_section(
+        doc,
+        job.get(
+            "application_fee"
+        ),
+        mode="compact"
+    )
+
+    # -----------------------------------------------------
+    # VACANCIES
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Vacancy Details"
+    )
+
+    add_vacancy_table(
+        doc,
+        job.get(
+            "vacancy_rows",
+            []
+        )
+    )
+
+    # -----------------------------------------------------
+    # ELIGIBILITY
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Eligibility"
+    )
+
+    add_compact_section(
+        doc,
+        job.get(
+            "eligibility"
+        ),
+        mode="eligibility"
+    )
+
+    # -----------------------------------------------------
+    # SELECTION
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Selection Process"
+    )
+
+    add_compact_section(
+        doc,
+        job.get(
+            "selection_process"
+        ),
+        mode="bullets"
+    )
+
+    # -----------------------------------------------------
+    # PAY
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Pay / Salary"
+    )
+
+    add_compact_section(
+        doc,
+        job.get(
+            "pay_scale"
+        ),
+        mode="bullets"
+    )
+
+    # -----------------------------------------------------
+    # HOW TO APPLY
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "How to Apply"
+    )
+
+    add_compact_section(
+        doc,
+        job.get(
+            "how_to_apply"
+        ),
+        mode="bullets"
+    )
+
+    # -----------------------------------------------------
+    # OFFICIAL LINKS
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Official Links"
+    )
+
+    add_links(
+        doc,
+        job
+    )
+
+    # -----------------------------------------------------
+    # SOURCE
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Source"
+    )
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.paragraph_format.space_after = Pt(0)
+
+    paragraph.add_run(
+        "SarkariResult detail page: "
+    ).bold = True
+
+    add_hyperlink(
+        paragraph,
+        job.get(
+            "detail_url",
+            ""
+        ),
+        job.get(
+            "detail_url",
+            ""
+        )
+    )
+
+
+# =========================================================
+# COMPLETE REPORT
+# =========================================================
+
+def make_report(
+    today,
+    results,
+    out
+):
+
+    doc = Document()
+
+    # -----------------------------------------------------
+    # PAGE SETUP
+    # -----------------------------------------------------
+
+    section = doc.sections[0]
+
+    section.top_margin = Inches(
+        0.45
+    )
+
+    section.bottom_margin = Inches(
+        0.45
+    )
+
+    section.left_margin = Inches(
+        0.55
+    )
+
+    section.right_margin = Inches(
+        0.55
+    )
+
+    # -----------------------------------------------------
+    # DEFAULT FONT
+    # -----------------------------------------------------
+
+    normal = doc.styles[
+        "Normal"
+    ]
+
+    normal.font.name = "Aptos"
+
+    normal.font.size = Pt(
+        8.5
+    )
+
+    # -----------------------------------------------------
+    # REPORT TITLE
+    # -----------------------------------------------------
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    run = paragraph.add_run(
+        f"Government Jobs Report — "
+        f"{today:%d %B %Y}"
+    )
+
+    run.bold = True
+
+    run.font.size = Pt(
+        18
+    )
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    run = paragraph.add_run(
+        "Source: SarkariResult Latest Jobs | "
+        "Future last-date listings only"
+    )
+
+    run.font.size = Pt(
+        9
+    )
+
+    # -----------------------------------------------------
+    # INDEX
+    # -----------------------------------------------------
+
+    add_section_heading(
+        doc,
+        "Index"
+    )
+
+    table = doc.add_table(
+        rows=1,
+        cols=4
+    )
+
+    table.alignment = (
+        WD_TABLE_ALIGNMENT.CENTER
+    )
+
+    header = table.rows[0]
+
+    set_repeat_table_header(
+        header
+    )
+
+    for cell, label in zip(
+        header.cells,
+        [
+            "#",
+            "Organisation",
+            "Post",
+            "Last Date",
+        ],
+    ):
+
+        set_cell_text(
+            cell,
+            label,
+            True
+        )
+
+        set_cell_shading(
+            cell,
+            "D9EAF7"
+        )
+
+    for i, job in enumerate(
+        results,
+        1
+    ):
+
+        listing = job.get(
+            "listing",
+            {}
+        )
+
+        cells = table.add_row().cells
+
+        set_cell_text(
+            cells[0],
+            i
+        )
+
+        set_cell_text(
+            cells[1],
+            job.get(
+                "organisation"
+            )
+            or "Not identified"
+        )
+
+        set_cell_text(
+            cells[2],
+            job.get(
+                "post_title"
+            )
+            or listing.get(
+                "title",
+                ""
+            )
+        )
+
+        set_cell_text(
+            cells[3],
+            job.get(
+                "application_end"
+            )
+            or listing.get(
+                "last_date",
+                ""
+            )
+        )
+
+    set_table_borders(
+        table
+    )
+
+    # -----------------------------------------------------
+    # JOB SECTIONS
+    # -----------------------------------------------------
+
+    for i, job in enumerate(
+        results,
+        1
+    ):
+
+        add_job(
+            doc,
+            job,
+            i
+        )
+
+    # -----------------------------------------------------
+    # SAVE
+    # -----------------------------------------------------
+
+    Path(
+        out
+    ).parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    doc.save(
+        out
+    )
+
+    return out
