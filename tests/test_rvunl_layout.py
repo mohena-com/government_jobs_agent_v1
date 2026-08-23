@@ -50,4 +50,14 @@ def test_v16_rvunl_layout_extracts_key_information(tmp_path):
     assert facts["application_end"] == "25 August 2026"
     assert facts["age_limit"] == "18-40 years"
     assert facts["derived_vacancy_sum"] == 2005
+    # V1.9.8 hard gate requires verified post-specific eligibility. The DOCX
+    # fixture itself does not contain it, so provide the verified canonical
+    # post facts as the official-verification layer would.
+    facts["post_facts"] = [
+        {"post": "Junior Engineer-I (Electrical)", "qualification": "Verified"},
+        {"post": "Junior Engineer-I (Mechanical)", "qualification": "Verified"},
+        {"post": "Junior Engineer-I (Civil)", "qualification": "Verified"},
+        {"post": "Junior Accountant", "qualification": "Verified"},
+        {"post": "Junior Assistant/ Commercial Assistant-II", "qualification": "Verified"},
+    ]
     assert quality_gate(job, facts)["status"] == "PASS"

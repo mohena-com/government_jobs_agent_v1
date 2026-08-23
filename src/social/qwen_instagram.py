@@ -61,12 +61,14 @@ def generate_from_docx(
         gate = quality_gate(job, facts)
         if verify_official:
             gate["official_verification_status"] = verification.get("status") if verification else "NOT_RUN"
-            gate["verification_required"] = False if verification and verification.get("status") == "PASS" else True
             if verification and verification.get("status") != "PASS":
                 gate["errors"].append("Official notification verification failed; Qwen generation is blocked")
                 gate["status"] = "FAIL"
             elif verification and verification.get("status") == "PASS":
                 gate["status"] = "PASS" if not gate.get("errors") else "FAIL"
+            # Never overwrite a post-fact verification requirement produced by
+            # the quality gate. It must remain true whenever suspicious facts exist.
+            gate["verification_required"] = bool(gate.get("verification_required") or gate.get("suspicious_fields"))
         any_failed = any_failed or gate["status"] == "FAIL"
 
         record = {
