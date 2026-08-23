@@ -20,11 +20,13 @@ p.add_argument("--ollama-model", default="qwen3:8b")
 p.add_argument("--slide-count", type=int, default=6)
 p.add_argument("--qwen-output", default="social/qwen")
 p.add_argument("--job-index", type=int, default=None, help="1-based job number to send to Qwen (useful for testing)")
+p.add_argument("--quality-gate-only", action="store_true", help="Extract facts and run the quality gate without calling Qwen")
+p.add_argument("--allow-qwen-on-failed-gate", action="store_true", help="Do not block Qwen when the quality gate fails (not recommended)")
 
 args = p.parse_args()
 
 if args.docx:
-    if not args.qwen:
+    if not args.qwen and not args.quality_gate_only:
         from src.docx.reader import read_docx
         parsed = read_docx(args.docx)
         print(f"DOCX: {args.docx}")
@@ -40,6 +42,8 @@ if args.docx:
         model=args.ollama_model,
         slide_count=args.slide_count,
         job_index=args.job_index,
+        quality_gate_only=args.quality_gate_only,
+        fail_on_quality_gate=not args.allow_qwen_on_failed_gate,
     )
     print(f"DOCX: {args.docx}")
     print(f"Ollama: {args.ollama_host}")
