@@ -556,7 +556,24 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
                 })
         facts['eligibility'] = '; '.join(f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}" for r in eligibility_rows) or 'Verified from official advertisements; post-specific educational qualifications were not text-extracted.'
         facts['selection_process'] = '; '.join(d.get('selection_process','') for d in docs if d.get('selection_process'))
-        facts['how_to_apply'] = '; '.join(d.get('how_to_apply','') for d in docs if d.get('how_to_apply'))
+        # Some RVUNL PDF text layouts do not expose a real "How to Apply"
+        # heading cleanly; the section extractor can then land on the preceding
+        # company/area table. Never pass that boilerplate downstream. Keep the
+        # field empty when it is not a genuine application-procedure section.
+        how_values = [d.get('how_to_apply','') for d in docs if d.get('how_to_apply')]
+        how_text = '; '.join(how_values)
+        how_low = how_text.lower()
+        contaminated_how = any(x in how_low for x in (
+            'name of company field area of operation',
+            'generation of electricity',
+            'transmission of electricity',
+            'distribution of electricity',
+        ))
+        facts['how_to_apply'] = '' if contaminated_how else how_text
+        if contaminated_how:
+            facts['how_to_apply_verification_note'] = (
+                'Official PDF did not yield a clean How to Apply section; field intentionally cleared.'
+            )
         facts['experience'] = '; '.join(d.get('experience_official','') for d in docs if d.get('experience_official'))
         fee_values=[d.get('application_fee_official','') for d in docs if d.get('application_fee_official')]
         if fee_values: facts['application_fee']='; '.join(fee_values)
