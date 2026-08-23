@@ -128,7 +128,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
         if len(bullets) > 6:
             slide_errors.append("Too many bullets for Instagram slide")
         if expected_type and _norm(slide.get("type")) != expected_type:
-            slide_warnings.append(f"Expected slide type '{expected_type}', got '{slide.get('type')}'")
+            slide_errors.append(f"Expected slide type '{expected_type}', got '{slide.get('type')}'")
 
         for phrase, label in CONDITIONAL_CLAIMS.items():
             if phrase in generated_text and label not in source:

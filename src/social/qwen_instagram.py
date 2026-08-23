@@ -113,19 +113,45 @@ def generate_from_docx(
             if gate["status"] == "FAIL":
                 record["action"] = "BLOCKED: fix source extraction before sending facts to Qwen"
         else:
+            attempts = []
             raw_plan = client.generate_slide_plan(facts, slide_count=slide_count)
             plan = sanitize_slide_plan(raw_plan)
             plan = _attach_verified_links(plan, facts)
             warnings = validate_slide_plan(plan, facts)
             slide_gate = slide_quality_gate(plan, facts)
+            attempts.append({"attempt": 1, "gate": slide_gate, "plan": plan})
+
+            # V1.9.15: automatically repair a failed Qwen plan once using the
+            # exact deterministic gate errors. Never manually override facts.
+            if slide_gate["status"] == "FAIL":
+                repaired_raw = client.repair_slide_plan(
+                    facts, plan, slide_gate.get("errors", []), slide_count=slide_count
+                )
+                repaired = sanitize_slide_plan(repaired_raw)
+                repaired = _attach_verified_links(repaired, facts)
+                repaired_warnings = validate_slide_plan(repaired, facts)
+                repaired_gate = slide_quality_gate(repaired, facts)
+                attempts.append({"attempt": 2, "gate": repaired_gate, "plan": repaired})
+                if repaired_gate["status"] == "PASS":
+                    raw_plan = repaired_raw
+                    plan = repaired
+                    warnings = repaired_warnings
+                    slide_gate = repaired_gate
+
+            record["qwen_attempts"] = [
+                {"attempt": a["attempt"], "status": a["gate"].get("status"), "errors": a["gate"].get("errors", []), "warnings": a["gate"].get("warnings", [])}
+                for a in attempts
+            ]
             record["raw_slide_plan"] = raw_plan
             record["slide_plan"] = plan
             record["validation_warnings"] = warnings
             record["slide_quality_gate"] = slide_gate
             record["presentation_ready"] = slide_gate["status"] == "PASS"
             if slide_gate["status"] == "FAIL":
-                record["action"] = "BLOCKED: slide-level quality gate failed"
+                record["action"] = "BLOCKED: slide-level quality gate failed after automatic repair"
                 any_failed = True
+            elif len(attempts) > 1:
+                record["action"] = "QWEN_GENERATED_AFTER_AUTOMATIC_REPAIR_AND_SLIDE_GATE_PASSED"
             else:
                 record["action"] = "QWEN_GENERATED_AND_SLIDE_GATE_PASSED"
 
@@ -147,7 +173,7 @@ def generate_from_docx(
         "jobs": generated,
     }
     summary_path = output_dir / "qwen_instagram_plans.json"
-    # V1.9.14: presentation-ready copy is separated from audit metadata.
+    # V1.9.15: presentation-ready copy is separated from audit metadata.
     if generated:
         ready = [
             {"job_index": r["job_index"], "slides": r.get("slide_plan", {}).get("slides", [])}
@@ -155,7 +181,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.14", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.15", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

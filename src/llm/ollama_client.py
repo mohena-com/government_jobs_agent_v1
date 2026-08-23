@@ -61,7 +61,7 @@ class OllamaClient:
         explicitly excluded from presentation copy.
         """
         if slide_count != 6:
-            raise ValueError("V1.9.14 presentation mode requires exactly 6 slides")
+            raise ValueError("V1.9.15 presentation mode requires exactly 6 slides")
 
         schema = {
             "type": "object",
@@ -95,6 +95,8 @@ class OllamaClient:
         system = """
 You are a professional Indian government-recruitment content editor.
 Create a COMPLETE, factual, job-seeker-focused Instagram recruitment carousel.
+
+IMPORTANT: This is not a summary. Every slide has a fixed role, and every available verified core fact must be placed in the appropriate slide.
 
 SOURCE OF TRUTH
 The LOCKED_FACTS supplied by the user are the ONLY source of truth.
@@ -175,7 +177,7 @@ The facts_used field is for internal audit only and will not be rendered.
 """
 
         user = {
-            "task": "Create exactly six complete Instagram recruitment slides from the verified facts.",
+            "task": "Create exactly six complete Instagram recruitment slides from the verified facts. Do not duplicate the vacancies slide in place of eligibility, age/pay/fee, or apply/links.",
             "requirements": {
                 "preserve_every_verified_post": True,
                 "preserve_exact_vacancy_numbers": True,
@@ -198,6 +200,79 @@ The facts_used field is for internal audit only and will not be rendered.
             think=False,
             temperature=0.10,
             format_schema=schema,
+        )
+        return parse_json_content(data["message"]["content"])
+
+
+    def repair_slide_plan(self, facts: dict, previous_plan: dict, gate_errors: list[str], slide_count: int = 6) -> dict:
+        """Repair a failed six-slide plan using deterministic gate feedback.
+
+        This is a second Qwen pass, not a manual override. The model receives the
+        exact gate failures and must return the same fixed six-slide schema.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "slides": {
+                    "type": "array", "minItems": 6, "maxItems": 6,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "number": {"type": "integer"},
+                            "type": {"type": "string", "enum": ["title", "vacancies", "eligibility", "age_pay_fee", "dates_selection", "apply_links"]},
+                            "headline": {"type": "string"},
+                            "subtitle": {"type": "string"},
+                            "bullets": {"type": "array", "items": {"type": "string"}},
+                            "facts_used": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["number", "type", "headline", "subtitle", "bullets", "facts_used"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["slides"], "additionalProperties": False,
+        }
+        system = """
+You are repairing a failed government-recruitment Instagram carousel.
+The LOCKED_FACTS are the only source of truth.
+Return JSON only.
+
+NON-NEGOTIABLE: return exactly 6 slides IN THIS EXACT ORDER AND TYPE:
+1 title
+2 vacancies
+3 eligibility
+4 age_pay_fee
+5 dates_selection
+6 apply_links
+
+Do not change the slide types. Do not create a second vacancies slide.
+Do not omit a verified post.
+Do not omit available eligibility, age, pay, fee, selection, dates, or application information.
+Do not invent anything. Do not infer missing values.
+Do not print raw URLs or Markdown links in headline/subtitle/bullets; URLs are attached separately by the application.
+Never include QA/debug/audit text: PASS, FAIL, quality gate, verification status, parsed vacancies,
+authoritative vacancies, reconciliation, extraction repairs, facts_used, source methods, or PDF extraction notes.
+
+SLIDE REQUIREMENTS:
+1 title: organisation, recruitment, total vacancies, deadline.
+2 vacancies: every verified post + exact vacancy + total.
+3 eligibility: concise post-specific qualifications/skills/experience.
+4 age_pay_fee: age/relaxation, pay/salary/level, category-wise fee.
+5 dates_selection: application dates and exact selection process.
+6 apply_links: how to apply/instructions and a clear prompt to use official links; do not print URLs.
+
+The facts_used array is audit-only and will not be rendered.
+""".strip()
+        user = {
+            "task": "Repair the carousel so every gate error is resolved.",
+            "gate_errors": gate_errors,
+            "required_slide_types": ["title", "vacancies", "eligibility", "age_pay_fee", "dates_selection", "apply_links"],
+            "previous_plan": previous_plan,
+            "LOCKED_FACTS": facts,
+        }
+        data = self.chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
+            think=False, temperature=0.05, format_schema=schema,
         )
         return parse_json_content(data["message"]["content"])
 
