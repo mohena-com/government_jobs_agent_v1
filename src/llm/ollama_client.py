@@ -54,33 +54,34 @@ class OllamaClient:
         return data
 
     def generate_slide_plan(self, facts: dict, slide_count: int = 6) -> dict:
-        """Turn locked source facts into Instagram slide copy.
+        """Create a complete, job-seeker-focused Instagram recruitment post.
 
-        Qwen is an editorial layer only. It receives factual data and is told
-        not to invent missing values. The caller should still validate output.
+        Qwen is an editorial layer only. The supplied verified fact bundle is
+        the sole source of truth. Internal audit/reconciliation information is
+        explicitly excluded from presentation copy.
         """
+        if slide_count != 6:
+            raise ValueError("V1.9.14 presentation mode requires exactly 6 slides")
+
         schema = {
             "type": "object",
             "properties": {
                 "slides": {
                     "type": "array",
-                    "minItems": slide_count,
-                    "maxItems": slide_count,
+                    "minItems": 6,
+                    "maxItems": 6,
                     "items": {
                         "type": "object",
                         "properties": {
                             "number": {"type": "integer"},
-                            "type": {"type": "string"},
+                            "type": {
+                                "type": "string",
+                                "enum": ["title", "vacancies", "eligibility", "age_pay_fee", "dates_selection", "apply_links"],
+                            },
                             "headline": {"type": "string"},
                             "subtitle": {"type": "string"},
-                            "bullets": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                            "facts_used": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
+                            "bullets": {"type": "array", "items": {"type": "string"}},
+                            "facts_used": {"type": "array", "items": {"type": "string"}},
                         },
                         "required": ["number", "type", "headline", "subtitle", "bullets", "facts_used"],
                         "additionalProperties": False,
@@ -91,41 +92,114 @@ class OllamaClient:
             "additionalProperties": False,
         }
 
-        system = (
-            "You are a factual Instagram government-jobs content editor. "
-            "You are NOT the source of truth. You may only transform the supplied "
-            "LOCKED_FACTS into concise slide copy. Never invent, infer, or change "
-            "dates, years, vacancy counts, advertisement numbers, post names, "
-            "qualifications, salaries, fees, URLs, or application status. "
-            "If information is absent, do not create a factual claim. "
-            "Do not use 'Apply Now', 'LIVE', 'Don't Miss Out' or similar urgency "
-            "claims unless the supplied facts explicitly establish that status. "
-            "Return JSON only. Keep each slide readable and factual."
-        )
+        system = """
+You are a professional Indian government-recruitment content editor.
+Create a COMPLETE, factual, job-seeker-focused Instagram recruitment carousel.
+
+SOURCE OF TRUTH
+The LOCKED_FACTS supplied by the user are the ONLY source of truth.
+Never invent, infer, estimate, generalize, or correct a missing fact.
+Never change verified numbers, dates, post names, qualifications, fees, pay,
+age limits, selection stages, or URLs.
+If a fact is unavailable, omit it rather than guessing.
+
+CRITICAL SEPARATION
+The Instagram audience is a JOB SEEKER, not a data-engineering auditor.
+NEVER expose internal pipeline information such as:
+- status / PASS / FAIL
+- quality gate / slide quality gate
+- validation / verification status
+- parsed vacancies / authoritative vacancies
+- vacancy reconciliation
+- extraction repairs
+- PDF extraction problems
+- facts_used
+- locked facts
+- source methods
+- parser/debug information
+
+These are internal audit metadata and must NEVER appear in headline, subtitle, or bullets.
+
+CONTENT GOAL
+The six slides together must provide the important information a job seeker
+needs before applying. Prioritize useful recruitment facts over generic prose.
+Do not use generic filler such as "great opportunity", "secure your future",
+"all vacancies are announced through official channels", or similar promotional text.
+
+EXACT SIX-SLIDE STRUCTURE
+1. type=title
+   - Recruitment name / organisation
+   - Total vacancies
+   - Major posts
+   - Application deadline
+
+2. type=vacancies
+   - COMPLETE post-wise vacancy breakdown from verified facts
+   - Include every verified post and the total
+
+3. type=eligibility
+   - Post-specific educational qualification
+   - Computer/skill/experience requirements where verified
+   - Keep wording concise but do not collapse distinct post requirements
+
+4. type=age_pay_fee
+   - Age limit and relaxation where verified
+   - Pay/salary/pay level where verified
+   - Application fee by category where verified
+
+5. type=dates_selection
+   - Application start/end dates
+   - Other verified important dates
+   - Exact selection process, including post-specific differences
+
+6. type=apply_links
+   - How to apply, only if verified
+   - Important application instructions
+   - DO NOT print URLs in bullets.
+   - Official links are attached by the application after generation.
+   - If no application URL is verified, say only that the official notification
+     should be consulted; do not invent an application website.
+
+PRESENTATION STYLE
+- Clear, professional, concise Indian recruitment language.
+- Use human-readable dates such as "05 August 2026".
+- Use "Last Date to Apply" for a future deadline; never say "application ended"
+  unless the locked facts establish that it has actually ended.
+- No raw URLs or Markdown links in slide text.
+- Do not put QA/status language in the slide copy.
+- Do not put internal source references in the slide copy.
+
+OUTPUT
+Return JSON only using the required schema.
+The facts_used field is for internal audit only and will not be rendered.
+"""
+
         user = {
-            "task": f"Create exactly {slide_count} Instagram carousel slides.",
-            "slide_guidance": [
-                "cover/hook",
-                "organisation, post and vacancies",
-                "eligibility and experience",
-                "age, pay and reservation where available",
-                "application dates, fee and application method",
-                "important instructions and official source/application links",
-            ],
+            "task": "Create exactly six complete Instagram recruitment slides from the verified facts.",
+            "requirements": {
+                "preserve_every_verified_post": True,
+                "preserve_exact_vacancy_numbers": True,
+                "include_eligibility": True,
+                "include_age_pay_fee": True,
+                "include_dates": True,
+                "include_selection": True,
+                "include_application_information": True,
+                "never_render_internal_audit_text": True,
+                "never_render_raw_urls": True,
+            },
             "LOCKED_FACTS": facts,
         }
 
         data = self.chat(
             [
-                {"role": "system", "content": system},
+                {"role": "system", "content": system.strip()},
                 {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
             ],
             think=False,
-            temperature=0.15,
+            temperature=0.10,
             format_schema=schema,
         )
-        content = data["message"]["content"]
-        return parse_json_content(content)
+        return parse_json_content(data["message"]["content"])
 
 
 def parse_json_content(content: str) -> dict:

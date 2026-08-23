@@ -6,7 +6,6 @@ from typing import Any
 
 from src.llm.validator import validate_slide_plan
 
-
 GENERIC_FILLER = {
     "vacancies are announced through official channels",
     "all vacancies are announced through official channels",
@@ -15,16 +14,17 @@ GENERIC_FILLER = {
     "all application details must be submitted in the prescribed format",
 }
 
-# Claims that require explicit source support. These are intentionally conservative.
 CONDITIONAL_CLAIMS = {
     "document verification": "document verification",
-    "document verification is required": "document verification",
-    "final selection is based on the written exam and document verification": "document verification",
+    "typing test": "typing",
+    "final selection is based on": "selection_process",
     "apply now": "application status",
     "application is live": "application status",
     "recruitment is live": "application status",
     "don't miss out": "application status",
 }
+
+EXPECTED_TYPES = ["title", "vacancies", "eligibility", "age_pay_fee", "dates_selection", "apply_links"]
 
 
 def _flatten(value: Any) -> list[str]:
@@ -73,38 +73,41 @@ def _date_end(facts: dict) -> date | None:
     return date(int(m.group(3)), months[m.group(2).lower()], int(m.group(1)))
 
 
-def _claim_supported(claim: str, facts_text: str) -> bool:
-    claim_n = _norm(claim)
-    if not claim_n:
-        return True
-    # Exact/near-exact factual strings from the locked bundle are acceptable.
-    if claim_n in facts_text:
-        return True
-    # Individual facts used by generated prose.
-    important = [
-        facts_text,
-    ]
-    return any(claim_n in x for x in important)
+def _post_names(facts: dict) -> list[str]:
+    names = []
+    for item in facts.get("post_vacancies") or facts.get("raw_post_vacancies") or []:
+        if isinstance(item, dict) and item.get("post"):
+            names.append(str(item["post"]))
+    if not names:
+        for item in facts.get("post_facts") or facts.get("post_eligibility") or []:
+            if isinstance(item, dict) and item.get("post"):
+                names.append(str(item["post"]))
+    return list(dict.fromkeys(names))
+
+
+def _combined_text(slides: list[dict]) -> str:
+    parts = []
+    for s in slides:
+        parts.extend([str(s.get("headline") or ""), str(s.get("subtitle") or "")])
+        parts.extend(str(x) for x in (s.get("bullets") or []))
+    return _norm(" ".join(parts))
+
+
+def _available_link_count(facts: dict) -> int:
+    return sum(1 for x in (facts.get("official_links") or []) if isinstance(x, dict) and x.get("url"))
 
 
 def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) -> dict:
-    """Validate the generated slide plan against locked/official facts.
-
-    This is deliberately stricter than the numeric validator. It catches
-    unsupported process claims, stale application wording, generic filler and
-    malformed slide structure before image rendering.
-    """
     errors: list[str] = []
     warnings: list[str] = []
     slides = _generated_slides(plan)
     source = _source_text(facts)
 
-    expected_count = None
-    # The caller's requested count is represented by the actual plan; six is the
-    # production default but the gate remains usable for other counts.
     if not slides:
-        errors.append("No slides generated")
-        return {"status": "FAIL", "errors": errors, "warnings": warnings, "slide_count": 0, "slide_results": []}
+        return {"status": "FAIL", "errors": ["No slides generated"], "warnings": [], "slide_count": 0, "slide_results": []}
+
+    if len(slides) != 6:
+        errors.append(f"Expected 6 presentation slides, generated {len(slides)}")
 
     numbers = _numeric_tokens(source)
     slide_results = []
@@ -116,6 +119,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
         generated_text = _norm(" ".join([headline, subtitle] + [str(x) for x in bullets]))
         slide_errors: list[str] = []
         slide_warnings: list[str] = []
+        expected_type = EXPECTED_TYPES[pos - 1] if pos <= len(EXPECTED_TYPES) else None
 
         if not headline.strip():
             slide_errors.append("Missing headline")
@@ -123,6 +127,8 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             slide_errors.append("bullets must be an array")
         if len(bullets) > 6:
             slide_errors.append("Too many bullets for Instagram slide")
+        if expected_type and _norm(slide.get("type")) != expected_type:
+            slide_warnings.append(f"Expected slide type '{expected_type}', got '{slide.get('type')}'")
 
         for phrase, label in CONDITIONAL_CLAIMS.items():
             if phrase in generated_text and label not in source:
@@ -132,41 +138,71 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             if filler in generated_text:
                 slide_warnings.append(f"Generic filler: '{filler}'")
 
-        # Numeric validation, but do not treat the '27' in 2026-27 advertisement
-        # identifiers as a standalone factual claim.
         for token in _numeric_tokens(generated_text):
-            if token in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}:
+            if token in {str(i) for i in range(1, 13)}:
                 continue
             if token == "27" and re.search(r"2026\s*[-/]\s*27", generated_text):
                 continue
             if token not in numbers:
                 slide_warnings.append(f"Generated numeric token not found in locked facts: {token}")
 
-        # Application status must reflect the actual deadline.
         end_date = _date_end(facts)
         if end_date:
             check_date = today or date.today()
             if end_date >= check_date and any(x in generated_text for x in ("application ended", "applications ended", "deadline passed")):
                 slide_errors.append(f"Stale application-status wording: deadline is {end_date.isoformat()}, not ended as of {check_date.isoformat()}")
 
-        # If the source contains a structured selection process, generated
-        # selection claims must overlap with that source. Avoid allowing a
-        # generic 'written exam + document verification' shortcut.
-        if str(slide.get("type") or "").lower() in {"selection", "selection process"} or "selection process" in generated_text:
-            selection = _norm(facts.get("selection_process"))
-            if selection:
-                if "document verification" in generated_text and "document verification" not in selection:
-                    slide_errors.append("Selection slide claims document verification, but locked selection facts do not state it")
-                if "typing test" in generated_text and "typing" not in selection:
-                    slide_errors.append("Selection slide claims a typing test, but locked selection facts do not state it")
+        if pos == 6:
+            links = slide.get("links") or []
+            if _available_link_count(facts) and not links:
+                slide_errors.append("Slide 6 must contain structured official links; raw URLs must not be rendered as text")
+            for link in links:
+                if not isinstance(link, dict) or not link.get("url"):
+                    slide_errors.append("Malformed structured link on slide 6")
 
         if slide_errors:
             errors.extend([f"Slide {pos}: {e}" for e in slide_errors])
         warnings.extend([f"Slide {pos}: {w}" for w in slide_warnings])
         slide_results.append({"slide": pos, "status": "FAIL" if slide_errors else "PASS", "errors": slide_errors, "warnings": slide_warnings})
 
-    # Numeric/url validator remains useful, but its findings are warnings here
-    # because identifier fragments such as 27 can be legitimate.
+    # Completeness: require all verified core facts to appear somewhere in the presentation.
+    all_text = _combined_text(slides)
+    total = str(facts.get("total_vacancies") or facts.get("combined_vacancies") or "")
+    if total and re.sub(r"\D", "", total) not in re.sub(r"\D", "", all_text):
+        errors.append(f"Completeness: total vacancies {total} missing from presentation")
+
+    for post in _post_names(facts):
+        # Compare normalized key phrase, tolerating minor punctuation differences.
+        key = _norm(post).replace("/", " ")
+        if key and key not in all_text.replace("/", " "):
+            # Require the distinctive post label rather than exact long prose.
+            distinctive = _norm(post.split("(")[0]).strip()
+            if distinctive and distinctive not in all_text:
+                errors.append(f"Completeness: verified post missing from presentation: {post}")
+
+    if facts.get("eligibility") or facts.get("post_eligibility") or facts.get("post_facts"):
+        if not any(k in all_text for k in ("eligib", "qualification", "degree", "diploma", "secondary")):
+            errors.append("Completeness: eligibility/qualification information missing")
+
+    if facts.get("age_limit"):
+        if not any(k in all_text for k in ("age", "years")):
+            errors.append("Completeness: age-limit information missing")
+
+    if facts.get("pay_scale"):
+        if not any(k in all_text for k in ("pay", "salary", "level")):
+            errors.append("Completeness: pay/salary information missing")
+
+    if facts.get("application_fee"):
+        if not any(k in all_text for k in ("fee", "₹", "rs.", "rs ")):
+            errors.append("Completeness: application-fee information missing")
+
+    if facts.get("application_start") and facts.get("application_end"):
+        if not ("application" in all_text and ("august" in all_text or "january" in all_text or "february" in all_text or "march" in all_text or "april" in all_text or "may" in all_text or "june" in all_text or "july" in all_text or "september" in all_text or "october" in all_text or "november" in all_text or "december" in all_text)):
+            errors.append("Completeness: application dates missing")
+
+    if facts.get("selection_process") and "selection" not in all_text and "exam" not in all_text and "written" not in all_text:
+        errors.append("Completeness: selection-process information missing")
+
     validator_warnings = validate_slide_plan(plan, facts)
     for warning in validator_warnings:
         if warning == "Generated numeric token not found in locked facts: 27":
@@ -174,10 +210,4 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
         warnings.append(warning)
 
     status = "PASS" if not errors else "FAIL"
-    return {
-        "status": status,
-        "errors": errors,
-        "warnings": warnings,
-        "slide_count": len(slides),
-        "slide_results": slide_results,
-    }
+    return {"status": status, "errors": errors, "warnings": warnings, "slide_count": len(slides), "slide_results": slide_results}

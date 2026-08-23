@@ -40,6 +40,13 @@ def test_blocks_stale_ended_wording_before_deadline():
 
 
 def test_allows_verified_vacancy_numbers_and_2026_27_identifier():
-    plan = {"slides": [{"number": 1, "type": "title", "headline": "RVUNL Recruitment 2026-27", "subtitle": "2,005 vacancies", "bullets": ["Electrical: 727", "Mechanical: 110", "Civil: 32"], "facts_used": []}]}
-    result = slide_quality_gate(plan, facts())
+    slides = [
+        {"number": 1, "type": "title", "headline": "RVUNL Recruitment 2026-27", "subtitle": "2,005 vacancies", "bullets": ["Apply by 25 August 2026"], "facts_used": []},
+        {"number": 2, "type": "vacancies", "headline": "Vacancies", "subtitle": "Post-wise", "bullets": ["Junior Engineer-I (Electrical): 727", "Junior Engineer-I (Mechanical): 110", "Junior Engineer-I (Civil): 32", "Junior Accountant: 371", "Junior Assistant/ Commercial Assistant-II: 765", "Total: 2005"], "facts_used": []},
+        {"number": 3, "type": "eligibility", "headline": "Eligibility", "subtitle": "Qualification", "bullets": ["Graduation / Senior Secondary as post-specific"], "facts_used": []},
+        {"number": 4, "type": "age_pay_fee", "headline": "Age, Pay & Fee", "subtitle": "Key details", "bullets": ["Age: 18-43 years", "Pay: Level-10 and Level-5", "Application fee: ₹500-₹1000"], "facts_used": []},
+        {"number": 5, "type": "dates_selection", "headline": "Dates & Selection", "subtitle": "Important dates", "bullets": ["Applications: 05 August 2026 to 25 August 2026", "Computer based competitive examination; typing test for Junior Assistant"], "facts_used": []},
+        {"number": 6, "type": "apply_links", "headline": "How to Apply", "subtitle": "Official source", "bullets": ["Read the official notification before applying"], "links": [{"label": "Official Notification", "url": "https://example.gov.in/a.pdf"}], "facts_used": []},
+    ]
+    result = slide_quality_gate({"slides": slides}, facts())
     assert result["status"] == "PASS"

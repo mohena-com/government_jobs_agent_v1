@@ -12,6 +12,34 @@ from src.llm.presentation_sanitizer import sanitize_slide_plan
 from src.verify_official import verify_urls, apply_to_job
 
 
+def _attach_verified_links(plan: dict, facts: dict) -> dict:
+    """Attach verified URLs as structured metadata to the final slide.
+
+    URLs never become slide text. The renderer turns these into human-friendly
+    labels and QR codes. This also prevents Qwen from mangling long PDF URLs.
+    """
+    slides = plan.get("slides") if isinstance(plan, dict) else None
+    if not isinstance(slides, list) or not slides:
+        return plan
+    links = []
+    verification_links = (facts.get("official_verification") or {}).get("official_links", [])
+    for item in facts.get("official_links") or verification_links:
+        if isinstance(item, dict) and item.get("url"):
+            label = item.get("label") or "Official Notification"
+            links.append({"label": str(label), "url": str(item["url"]).strip()})
+    # Include an explicitly verified application URL if present in how_to_apply.
+    how = facts.get("how_to_apply")
+    if isinstance(how, str):
+        import re
+        for url in re.findall(r"https?://[^\s)]+", how):
+            if url not in {x["url"] for x in links}:
+                links.insert(0, {"label": "Apply Online", "url": url.rstrip(".,")})
+    if links:
+        slides[-1]["links"] = links[:4]
+        slides[-1]["link_note"] = "Scan a QR code for the official notification/application link."
+    return plan
+
+
 def generate_from_docx(
     docx_path: str | Path,
     output_dir: str | Path,
@@ -87,6 +115,7 @@ def generate_from_docx(
         else:
             raw_plan = client.generate_slide_plan(facts, slide_count=slide_count)
             plan = sanitize_slide_plan(raw_plan)
+            plan = _attach_verified_links(plan, facts)
             warnings = validate_slide_plan(plan, facts)
             slide_gate = slide_quality_gate(plan, facts)
             record["raw_slide_plan"] = raw_plan
@@ -118,7 +147,7 @@ def generate_from_docx(
         "jobs": generated,
     }
     summary_path = output_dir / "qwen_instagram_plans.json"
-    # V1.9.13: presentation-ready copy is separated from audit metadata.
+    # V1.9.14: presentation-ready copy is separated from audit metadata.
     if generated:
         ready = [
             {"job_index": r["job_index"], "slides": r.get("slide_plan", {}).get("slides", [])}
@@ -126,7 +155,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.13", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.14", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
