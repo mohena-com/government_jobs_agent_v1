@@ -1,10 +1,10 @@
-# SarkariResult Latest Jobs — V1.9.4
+# SarkariResult Latest Jobs — V1.9.6
 
-V1.9.4 adds **Official PDF Deep Fact Extraction** on top of V1.9.3.
+V1.9.6 adds a **hard post-specific eligibility quality gate** on top of V1.9.5.
 
 Pipeline:
 
-DOCX → official PDF verification → canonical vacancy reconciliation → deep official fact extraction → quality gate → Qwen
+DOCX → official PDF verification → canonical vacancy reconciliation → deep official fact extraction → post-fact quality gate → Qwen
 
 Qwen remains blocked until the quality gate passes.
 
@@ -55,3 +55,18 @@ Only after `quality_gate_status: PASS` should Qwen generation be enabled.
 ## Note
 
 Official PDF downloads require network access from the machine running the agent. If the government PDF host is temporarily unreachable, the verifier records a download error and blocks Qwen rather than fabricating facts.
+
+
+## V1.9.6 quality gate
+
+V1.9.6 blocks Qwen when official verification passes but critical post-wise
+eligibility facts are still generic, page-window based, unknown, or missing.
+
+For verified jobs:
+
+- `RVUNL_POST_BOUNDARY` is accepted as a post-specific source method.
+- `GENERIC_BOUNDARY`, `GENERIC`, `PAGE_WINDOW`, and `UNKNOWN` are rejected.
+- Every canonical `post_vacancies` entry must have a corresponding post-specific
+  qualification fact.
+- Empty post-specific qualification is rejected.
+- The canonical reconciled vacancy list remains the downstream source of truth.

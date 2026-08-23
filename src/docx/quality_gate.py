@@ -116,6 +116,64 @@ def quality_gate(job: dict, facts: dict) -> dict:
             errors.append(f"Unverified placeholder content in {field}")
             suspicious.append(field)
 
+    # V1.9.6: official verification is not sufficient by itself.  Critical
+    # post-specific facts must also be attributable to an explicit post boundary.
+    # This prevents a generic page/window extraction from being promoted to
+    # verified eligibility/qualification.
+    official_status = str(official.get("status") or "").upper()
+    post_facts = facts.get("post_facts") or []
+    post_eligibility = facts.get("post_eligibility") or []
+
+    if official_status == "PASS":
+        critical_rows = post_facts if post_facts else post_eligibility
+        if not critical_rows:
+            errors.append("Official verification passed but no post-specific eligibility facts were extracted")
+            suspicious.append("post_eligibility")
+        else:
+            generic_rows = []
+            empty_qual_rows = []
+            for row in critical_rows:
+                if not isinstance(row, dict):
+                    continue
+                method = str(row.get("source_method") or "").upper()
+                qualification = _norm(row.get("qualification"))
+                if method in {"GENERIC_BOUNDARY", "GENERIC", "PAGE_WINDOW", "UNKNOWN"}:
+                    generic_rows.append(row.get("post") or "(unknown post)")
+                if not qualification or _is_missing(qualification):
+                    empty_qual_rows.append(row.get("post") or "(unknown post)")
+
+            if generic_rows:
+                errors.append(
+                    "Post-specific eligibility contains generic/non-authoritative extraction "
+                    f"for: {', '.join(generic_rows)}"
+                )
+                suspicious.append("post_eligibility")
+            if empty_qual_rows:
+                errors.append(
+                    "Missing post-specific qualification for: " + ", ".join(empty_qual_rows)
+                )
+                suspicious.append("post_eligibility")
+
+        # If canonical vacancy rows exist, every verified post should have a
+        # corresponding post-specific fact. This catches partial extraction.
+        canonical_posts = {
+            _norm(x.get("post")).lower()
+            for x in (facts.get("post_vacancies") or [])
+            if isinstance(x, dict) and _norm(x.get("post"))
+        }
+        fact_posts = {
+            _norm(x.get("post")).lower()
+            for x in critical_rows
+            if isinstance(x, dict) and _norm(x.get("post"))
+        }
+        missing_posts = sorted(canonical_posts - fact_posts)
+        if missing_posts:
+            errors.append(
+                "Missing post-specific eligibility facts for canonical posts: "
+                + ", ".join(missing_posts)
+            )
+            suspicious.append("post_eligibility")
+
     # If every required field is verified and the vacancy table reconciles, PASS.
     # Otherwise the gate blocks Qwen. Candidates and missing fields remain verification work.
     verification_required = bool(verification)
