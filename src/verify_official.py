@@ -135,6 +135,7 @@ _DEEP_HEADINGS = [
     'How to Apply', 'How To Apply', 'Online Application', 'Application Procedure',
 ]
 
+
 def _section(text: str, headings: list[str], stop_headings: list[str] | None = None, max_chars: int = 5000) -> str:
     stop = stop_headings or _DEEP_HEADINGS
     pattern = r'(?im)^(?:\s*[-•●]?\s*)(' + '|'.join(re.escape(x) for x in headings) + r')\s*[:\-–—]?\s*'
@@ -149,6 +150,7 @@ def _section(text: str, headings: list[str], stop_headings: list[str] | None = N
     if sm: tail = tail[:sm.start()]
     return _clean(tail)
 
+
 def _post_eligibility(text: str, post_names: list[str]) -> list[dict]:
     rows=[]
     for i,name in enumerate(post_names):
@@ -161,14 +163,123 @@ def _post_eligibility(text: str, post_names: list[str]) -> list[dict]:
         block=text[m.start():end]
         qual=_section(block,['Educational Qualification','Education Qualification','Essential Qualification','Qualification','Eligibility'],max_chars=3500)
         exp=_section(block,['Experience'],max_chars=1800)
-        if qual or exp: rows.append({'post':name,'qualification':qual,'experience':exp})
+        if qual or exp: rows.append({'post':name,'qualification':qual,'experience':exp,'source_method':'GENERIC_BOUNDARY'})
     return rows
 
-def _deep_extract(text: str, post_names: list[str]) -> dict:
+
+def _rvunl_post_fact_blocks(text: str, ad: str) -> list[dict]:
+    """Structured RVUNL extraction.
+
+    The PDF text layer flattens multi-column tables and headings. Instead of
+    assigning one giant eligibility blob to the first post, split the official
+    advertisement by its explicit post labels and extract only the text that
+    belongs to that post. This is deliberately conservative: uncertain text is
+    left empty rather than copied into another post.
+    """
+    if ad.endswith('/02'):
+        posts = [
+            ('Junior Engineer-I (Electrical)', r'Electrical\s+The candidate must hold'),
+            ('Junior Engineer-I (Mechanical)', r'Mechanical\s+The candidate must hold'),
+            ('Junior Engineer-I (Civil)', r'Civil\s+The candidate must hold'),
+        ]
+        common = ('Candidates must possess working knowledge of Hindi written in Devnagri '
+                  'script and knowledge of Rajasthani culture.')
+        # Exact qualification sentences are safer than arbitrary page windows.
+        patterns = {
+            'Junior Engineer-I (Electrical)': r'Electrical\s+The candidate must hold\s+(.+?)(?=\s+Mechanical\s+The candidate must hold)',
+            'Junior Engineer-I (Mechanical)': r'Mechanical\s+The candidate must hold\s+(.+?)(?=\s+Civil\s+The candidate must hold)',
+            'Junior Engineer-I (Civil)': r'Civil\s+The candidate must hold\s+(.+?)(?=\s+\(b\)\s*Candidates must possess)',
+        }
+    elif ad.endswith('/03'):
+        posts = [
+            ('Junior Accountant', r'Name of Post[:—-]\s*Junior Accountant'),
+            ('Junior Assistant/ Commercial Assistant-II', r'Name of Post[:—-]\s*Junior Assistant/\s*Commercial Assistant-II'),
+        ]
+        patterns = {}
+        # The ministerial advertisement places the two qualification blocks
+        # under their post headings. Use heading-to-next-heading boundaries.
+        for i,(name,_) in enumerate(posts):
+            pass
+    else:
+        return []
+
+    out=[]
+    if ad.endswith('/02'):
+        for name,_ in posts:
+            m=re.search(patterns[name], text, re.I|re.S)
+            if not m:
+                continue
+            qual=_clean(m.group(1))
+            # Remove common post-independent text if it leaked into the match.
+            qual=re.sub(r'\s+RajKaj Ref No\.:\s*\d+\s*\d+', ' ', qual, flags=re.I)
+            if common.lower() not in qual.lower():
+                qual += ' ' + common
+            out.append({'post':name,'qualification':qual,'experience':'','source_method':'RVUNL_POST_BOUNDARY'})
+    else:
+        headings=[
+            ('Junior Accountant', r'Name of Post[:—-]\s*Junior Accountant'),
+            ('Junior Assistant/ Commercial Assistant-II', r'Name of Post[:—-]\s*Junior Assistant/\s*Commercial Assistant-II'),
+        ]
+        matches=[]
+        for name,pat in headings:
+            m=re.search(pat,text,re.I)
+            if m: matches.append((m.start(),m.end(),name))
+        matches.sort()
+        for i,(st,en,name) in enumerate(matches):
+            end=matches[i+1][0] if i+1<len(matches) else len(text)
+            block=text[en:end]
+            # Qualification usually appears before disqualification/character.
+            cut=re.search(r'\b(?:Disqualification for appointment|Character|Physical Fitness)\b',block,re.I)
+            if cut: block=block[:cut.start()]
+            # Strip vacancy-table material before the eligibility narrative.
+            qm=re.search(r'(?:Essential|Educational|requisite educational|candidate must hold|candidate should possess|qualification)',block,re.I)
+            if qm: block=block[qm.start():]
+            block=_clean(block)
+            # Avoid assigning the entire vacancy table as qualification.
+            if len(block)>5000: block=block[:5000]
+            out.append({'post':name,'qualification':block,'experience':'','source_method':'RVUNL_POST_BOUNDARY'})
+    return out
+
+
+def _clean_fee(text: str) -> str:
+    """Return only fee amounts/payment method, not surrounding application instructions."""
+    if not text: return ''
+    amounts=[]
+    for m in re.finditer(r'(General[^\n]{0,120}?\d[\d,]*\s*/?-|EWS[^\n]{0,180}?\d[\d,]*\s*/?-|SC\s*/\s*ST[^\n]{0,80}?\d[\d,]*\s*/?-)', text, re.I):
+        amounts.append(_clean(m.group(0)))
+    # Strong fallback for the RVUNL fee block.
+    g=re.search(r'General\s*/\s*:?\s*([\d,]+)\s*/?-',text,re.I)
+    r=re.search(r'(?:EWS\s*/\s*BC\s*/\s*MBC\s*SC\s*/\s*ST\s*/\s*PH)\s*:\s*([\d,]+)\s*/?-',text,re.I)
+    if g and r:
+        return f'General: ₹{g.group(1)}; EWS/BC/MBC/SC/ST/PwBD: ₹{r.group(1)}; payment: online.'
+    if amounts:
+        return '; '.join(dict.fromkeys(amounts))
+    return ''
+
+
+def _clean_selection(text: str) -> str:
+    if not text: return ''
+    # Preserve the useful exam structure but remove duplicated page headers and
+    # unrelated contingency paragraphs.
+    t=re.sub(r'\s+RajKaj Ref No\.:\s*\d+\s*\d+', ' ', text, flags=re.I)
+    t=re.sub(r'\s+', ' ', t).strip()
+    return t[:4500]
+
+
+def _deep_extract(text: str, post_names: list[str], ad: str = '') -> dict:
+    structured = _rvunl_post_fact_blocks(text, ad)
+    if structured:
+        return {
+            'post_eligibility': structured,
+            'selection_process': _clean_selection(_section(text,['Selection Process','Selection Procedure','Mode of Selection'],max_chars=4500)),
+            'application_fee_official': _clean_fee(_section(text,['Application Fee','Examination Fee','Fee Details'],max_chars=3000)),
+            'how_to_apply': _section(text,['How to Apply','How To Apply','Online Application','Application Procedure'],max_chars=3500),
+            'experience_official': _section(text,['Experience'],max_chars=1800),
+        }
     return {
         'post_eligibility': _post_eligibility(text,post_names),
-        'selection_process': _section(text,['Selection Process','Selection Procedure','Mode of Selection'],max_chars=3000),
-        'application_fee_official': _section(text,['Application Fee','Examination Fee','Fee Details'],max_chars=2200),
+        'selection_process': _clean_selection(_section(text,['Selection Process','Selection Procedure','Mode of Selection'],max_chars=3000)),
+        'application_fee_official': _clean_fee(_section(text,['Application Fee','Examination Fee','Fee Details'],max_chars=2200)),
         'how_to_apply': _section(text,['How to Apply','How To Apply','Online Application','Application Procedure'],max_chars=3000),
         'experience_official': _section(text,['Experience'],max_chars=1800),
     }
@@ -216,7 +327,7 @@ def _classify(text: str, url: str) -> dict:
         age, pay = '', ''
     posts = _post_sections(text)
     post_names = [_canonical_post(p.get('post','')) for p in posts]
-    deep = _deep_extract(text, post_names)
+    deep = _deep_extract(text, post_names, ad)
     return {
         'url': url, 'advertisement_number': ad, 'document_type': kind,
         'organisation': org, 'published_date': published,
@@ -362,6 +473,20 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
             for row in d.get('post_eligibility', []) or []:
                 rr=dict(row); rr['advertisement_number']=d.get('advertisement_number',''); rr['source_url']=d.get('url',''); eligibility_rows.append(rr)
         facts['post_eligibility'] = eligibility_rows
+        facts['post_facts'] = []
+        vacancy_map = {(x.get('advertisement_number',''), _canonical_post(x.get('post',''))): x for x in verification.get('post_vacancies', [])}
+        for d in docs:
+            for row in d.get('post_eligibility', []) or []:
+                key=(d.get('advertisement_number',''), _canonical_post(row.get('post','')))
+                vr=vacancy_map.get(key,{})
+                facts['post_facts'].append({
+                    'post': row.get('post',''),
+                    'advertisement_number': d.get('advertisement_number',''),
+                    'vacancies': vr.get('vacancies'),
+                    'qualification': row.get('qualification',''),
+                    'experience': row.get('experience',''),
+                    'source_url': d.get('url',''),
+                })
         facts['eligibility'] = '; '.join(f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}" for r in eligibility_rows) or 'Verified from official advertisements; post-specific educational qualifications were not text-extracted.'
         facts['selection_process'] = '; '.join(d.get('selection_process','') for d in docs if d.get('selection_process'))
         facts['how_to_apply'] = '; '.join(d.get('how_to_apply','') for d in docs if d.get('how_to_apply'))
