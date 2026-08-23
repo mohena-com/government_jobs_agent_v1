@@ -8,24 +8,22 @@ Common Recruitment of Junior Accountant and Junior Assistant/ Commercial Assista
 (i) Name of Post:- Junior Accountant
 In Non-TSP Areas
 RVUN\nTotal 41\nRVPN\nTotal 28\nJVVN\nTotal 116\nAVVN\nTotal 30\nJDVVN\nTotal 134
+HORIZONTAL RESERVATION
 In TSP Areas
 RVUN\nTotal 3\nAVVN\nTotal 18\nJDVVN\nTotal 1
 HORIZONTAL RESERVATION
 (ii) Name of Post:- Junior Assistant/ Commercial Assistant-II
 In Non-TSP Areas
 RVUN\nTotal 43\nRVPN\nTotal 41\nJVVN\nTotal 288\nAVVN\nTotal 126\nJDVVN\nTotal 186
+HORIZONTAL RESERVATION
 In TSP Areas
 RVUN\nTotal 2\nAVVN\nTotal 75\nJDVVN\nTotal 4
 HORIZONTAL RESERVATION
-Age Candidates must have attained the age of 18 years and must have not attained 40 years. upper age ... 43 years.
-IMPORTANT DATES
-Date of opening Website Link for submission of Online Application Form
 5th August, 2026 (10.00 AM)
-Last Date of submission of Online Application Form
 25th August, 2026 (12.00 Midnight)
 '''
 
-JE_TEXT = """
+JE_TEXT = '''
 RAJASTHAN RAJYA VIDYUT UTPADAN NIGAM LTD.
 August 04, 2026
 Common Recruitment of Junior Engineers-I
@@ -33,43 +31,62 @@ Common Recruitment of Junior Engineers-I
 (i) Name of Post:- Junior Engineer-I (Electrical)
 In Non-TSP Areas
 RVUN\nTotal 108\nRVPN\nTotal 156\nJVVN\nTotal 189\nAVVN\nTotal 122\nJDVVN\nTotal 119
+HORIZONTAL RESERVATION
 In TSP Areas
 RVUN\nTotal 1\nRVPN\nTotal 6\nAVVN\nTotal 22\nJDVVN\nTotal 4
 HORIZONTAL RESERVATION
 (ii) Name of Post:- Junior Engineer-I (Mechanical)
 In Non-TSP Areas
 RVUN\nTotal 108
+HORIZONTAL RESERVATION
 In TSP Areas
 RVUN\nTotal 2
 HORIZONTAL RESERVATION
 (iii) Name of Post:- Junior Engineer-I (Civil)
 In Non-TSP Areas
-RVPN\nTotal 31
-In TSP Areas
-RVPN\nTotal 1
+RVPN\n31\n0\n31
 HORIZONTAL RESERVATION
-IMPORTANT DATES
+In TSP Areas
+RVPN\n1\n0\n1
+HORIZONTAL RESERVATION
 5th August, 2026 (10.00 AM)
 25th August, 2026 (12.00 Midnight)
-"""
+'''
+
+SHORT_TEXT = '''
+RAJASTHAN RAJYA VIDYUT UTPADAN NIGAM LTD.
+RVUN/P&A/Rectt.2026-27/F.103/D.172 July 30, 2026
+NOTICE
+A short advertisement bearing no. RVUN/Rectt.-2026-27/01 for recruitment against 2005 vacancies of Junior Engineer-I, Junior Accountant and Junior Assistant/Commercial Assistant-II in five Power Companies of Rajasthan.
+5th August, 2026 (10:00 AM)
+25th August, 2026 (12:00 Midnight)
+'''
 
 def test_classify_ja_totals_and_dates():
     d = _classify(JA_TEXT, 'https://example/ja.pdf')
     assert d['advertisement_number'] == 'RVUN/Rectt.-2026-27/03'
-    assert sum(p['total'] for p in d['post_sections']) == 1136
+    assert [p['total'] for p in d['post_sections']] == [371, 765]
     assert d['application_start'] == '2026-08-05'
     assert d['application_end'] == '2026-08-25'
 
 def test_classify_je_total_from_sections_fixture():
     d = _classify(JE_TEXT, 'https://example/je.pdf')
     assert d['advertisement_number'] == 'RVUN/Rectt.-2026-27/02'
-    assert sum(p['total'] for p in d['post_sections']) == 869
+    assert [p['total'] for p in d['post_sections']] == [727, 110, 32]
 
-def test_reconcile_combined_rvunl():
+def test_short_notice_2005_is_preserved():
+    d = _classify(SHORT_TEXT, 'https://example/short.pdf')
+    assert d['document_type'] == 'SHORT_NOTICE'
+    assert d['advertisement_number'] == 'RVUN/Rectt.-2026-27/01'
+    assert d['short_notice_total'] == 2005
+
+def test_reconcile_detailed_total_matches_short_notice():
+    short = _classify(SHORT_TEXT, 'https://example/short.pdf')
     ja = _classify(JA_TEXT, 'https://example/ja.pdf')
     je = _classify(JE_TEXT, 'https://example/je.pdf')
-    r = reconcile([ja, je], [])
+    r = reconcile([short, ja, je], [])
     assert r['combined_vacancies'] == 2005
-    assert r['application_start'] == '2026-08-05'
-    assert r['application_end'] == '2026-08-25'
+    assert r['short_notice_total'] == 2005
+    assert r['vacancy_reconciliation']['difference'] == 0
+    assert r['vacancy_reconciliation']['status'] == 'CONSISTENT'
     assert r['status'] == 'PASS'
