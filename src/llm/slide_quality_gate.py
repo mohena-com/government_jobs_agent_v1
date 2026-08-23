@@ -44,6 +44,13 @@ def _flatten(value: Any) -> list[str]:
 
 
 def _norm(s: str) -> str:
+    # Normalize prose/post names for semantic comparison.
+    text = str(s or "").strip().lower()
+    text = text.replace("/", " ").replace("\u2013", "-").replace("\u2014", "-")
+    return re.sub(r"[^a-z0-9+.-]+", " ", text).strip()
+
+def _norm_type(s: str) -> str:
+    # Preserve underscores because slide type identifiers are machine values.
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
 
@@ -127,7 +134,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             slide_errors.append("bullets must be an array")
         if len(bullets) > 6:
             slide_errors.append("Too many bullets for Instagram slide")
-        if expected_type and _norm(slide.get("type")) != expected_type:
+        if expected_type and _norm_type(slide.get("type")) != expected_type:
             slide_errors.append(f"Expected slide type '{expected_type}', got '{slide.get('type')}'")
 
         for phrase, label in CONDITIONAL_CLAIMS.items():
@@ -173,8 +180,8 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
 
     for post in _post_names(facts):
         # Compare normalized key phrase, tolerating minor punctuation differences.
-        key = _norm(post).replace("/", " ")
-        if key and key not in all_text.replace("/", " "):
+        key = _norm(post)
+        if key and key not in _norm(all_text):
             # Require the distinctive post label rather than exact long prose.
             distinctive = _norm(post.split("(")[0]).strip()
             if distinctive and distinctive not in all_text:
