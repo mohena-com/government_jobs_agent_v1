@@ -210,8 +210,7 @@ def add_compact_section(doc, text, mode="lines"):
             p.paragraph_format.space_after = Pt(1)
             p.paragraph_format.keep_together = True
             p.add_run(line)
-un(chunk)
-
+p.add_run(chunk)
 
 def add_vacancy_table(doc, rows):
     if not rows:
