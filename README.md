@@ -25,17 +25,17 @@ latest-job index to every individual job-detail page.
 ## Run
 
 ```bash
-python -m venv .venv
+python3.1 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python main.py --max-jobs 3
+python3.1 main.py --max-jobs 3
 ```
 
 For targeted debugging:
 
 ```bash
-python main.py --only "RCFL,AAI,UPSC"
+python3.1 main.py --only "RCFL,AAI,UPSC"
 ```
 
 The `--only` option is only a test filter; UPSC is NOT a separate source.
