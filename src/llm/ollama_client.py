@@ -98,6 +98,8 @@ class OllamaClient:
             "dates, years, vacancy counts, advertisement numbers, post names, "
             "qualifications, salaries, fees, URLs, or application status. "
             "If information is absent, do not create a factual claim. "
+            "Do not infer an application website, application URL, application method, fee, or selection detail from context. "
+            "Prefer concrete verified facts over generic statements such as 'refer to official notification'. "
             "Do not use 'Apply Now', 'LIVE', 'Don't Miss Out' or similar urgency "
             "claims unless the supplied facts explicitly establish that status. "
             "Return JSON only. Keep each slide readable and factual."
@@ -105,12 +107,12 @@ class OllamaClient:
         user = {
             "task": f"Create exactly {slide_count} Instagram carousel slides.",
             "slide_guidance": [
-                "cover/hook",
-                "organisation, post and vacancies",
-                "eligibility and experience",
-                "age, pay and reservation where available",
-                "application dates, fee and application method",
-                "important instructions and official source/application links",
+                "cover/hook: organisation + recruitment year + verified total vacancies",
+                "vacancies: verified total and complete post-wise vacancy breakdown",
+                "eligibility: concise post-specific qualification requirements; do not invent experience",
+                "age/pay: verified age limits, pay scale and reservation information only",
+                "dates/fee/application: verified dates and fee; application method only when explicitly supported",
+                "selection/source: post-specific selection highlights and official notification links; avoid generic filler",
             ],
             "LOCKED_FACTS": facts,
         }
