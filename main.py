@@ -1,13 +1,27 @@
 import argparse
-from src.pipeline import run as run_upsc
-from src.sarkariresult.run import run as run_sarkari
+from pathlib import Path
+from src.sarkariresult.pipeline import crawl
+from src.report.docx import make_report
 
-p=argparse.ArgumentParser(description="UPSC Deep Recruitment Agent + SarkariResult discovery")
-p.add_argument("--source",choices=["upsc","sarkariresult","both"],default="upsc")
-p.add_argument("--advt",choices=["09","51"],default="09")
-p.add_argument("--deep-sarkariresult",action="store_true",help="Follow retained SarkariResult detail pages and inspect candidate official links")
-a=p.parse_args()
-if a.source in ("upsc","both"):
-    run_upsc(a.advt)
-if a.source in ("sarkariresult","both"):
-    run_sarkari(deep=a.deep_sarkariresult)
+p = argparse.ArgumentParser(
+    description="SarkariResult Latest Jobs only — future-date discovery and detail-page crawl"
+)
+p.add_argument("--max-jobs", type=int, default=None)
+p.add_argument("--only", default=None,
+               help="Optional comma-separated title keywords for testing")
+args = p.parse_args()
+
+today, results = crawl(max_jobs=args.max_jobs, only=args.only)
+out = Path("reports") / f"SarkariResult_LatestJobs_{today.isoformat()}.docx"
+make_report(today, results, out)
+
+print(f"Source: https://www.sarkariresult.com/latestjob/")
+print(f"Date (IST): {today}")
+print(f"Future listings crawled: {len(results)}")
+print(f"Report: {out}")
+for r in results:
+    print("\nJOB:", r["listing"]["title"])
+    print("DETAIL:", r["detail_url"])
+    print("OFFICIAL NOTIFICATION:", r["notification_links"][0]["url"] if r["notification_links"] else "NOT FOUND")
+    print("OFFICIAL APPLICATION:", r["application_links"][0]["url"] if r["application_links"] else "NOT FOUND")
+    print("DETAIL OK:", r["detail_ok"])

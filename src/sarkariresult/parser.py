@@ -1,20 +1,27 @@
-from __future__ import annotations
 import re
-from datetime import date, datetime
-from urllib.parse import urljoin
 import requests
+from datetime import datetime, date
+from urllib.parse import urljoin, urldefrag
 from bs4 import BeautifulSoup
 
 LATEST_URL = "https://www.sarkariresult.com/latestjob/"
-HEADERS = {"User-Agent": "GovernmentJobsAgent/1.2 (+responsible automated monitoring)"}
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/151.0 Safari/537.36 GovernmentJobsAgent/2.0"
+    )
+}
 
 DATE_PATTERNS = [
-    r"last\s*date\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
-    r"last\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
+    r"last\s*date\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})",
+    r"last\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})",
+    r"last\s*date\s*:?\s*(\d{1,2}-\d{1,2}-\d{4})",
+    r"last\s*:?\s*(\d{1,2}-\d{1,2}-\d{4})",
     r"last\s*date\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{4})",
 ]
 
-def parse_date(text: str):
+def parse_date(text):
     for pat in DATE_PATTERNS:
         m = re.search(pat, text or "", re.I)
         if not m:
@@ -27,43 +34,65 @@ def parse_date(text: str):
                 pass
     return None
 
-def fetch_latest():
-    r = requests.get(LATEST_URL, headers=HEADERS, timeout=45)
-    print("url {}", r.url)
+def normalise_url(url, base):
+    if not url:
+        return ""
+    url = urljoin(base, url)
+    url, _ = urldefrag(url)
+    return url
+
+def fetch(url):
+    r = requests.get(url, headers=HEADERS, timeout=45, allow_redirects=True)
     r.raise_for_status()
-    return BeautifulSoup(r.text, "lxml"), r.url
+    return r.text, r.url, r.headers.get("content-type", "")
 
-def scan_latest_jobs(today: date | None = None):
-    """Return only listings with a provable future closing date.
-
-    A missing/ambiguous date is excluded rather than guessed.
-    """
+def find_latest_listings(today=None):
     today = today or date.today()
-    soup, base_url = fetch_latest()
-    rows, seen = [], set()
+    html, final_url, _ = fetch(LATEST_URL)
+    soup = BeautifulSoup(html, "lxml")
 
-    for a in soup.find_all("a", href=True):
+    rows = []
+    seen = set()
+
+    # IMPORTANT: do not search only for anchors whose visible text contains
+    # "Last Date". We inspect every anchor in the All Latest Jobs section.
+    container = soup.find(id=re.compile("latest|job", re.I))
+    anchors = soup.find_all("a", href=True)
+
+    for a in anchors:
         title = " ".join(a.get_text(" ", strip=True).split())
         if not title:
             continue
-        low = title.lower()
-        if "last date" not in low and "last :" not in low:
-            continue
 
         last_date = parse_date(title)
-        if last_date is None or last_date <= today:
+        if not last_date:
             continue
 
-        url = urljoin(base_url, a["href"])
-        if url in seen:
+        # Strictly future.
+        if last_date <= today:
             continue
+
+        url = normalise_url(a.get("href"), final_url)
+        if not url or url in seen:
+            continue
+
+        # Ignore navigation links and keep job-like entries.
+        low = title.lower()
+        if not any(k in low for k in (
+            "online form", "recruitment", "vacancy", "apprentice",
+            "post", "officer", "engineer", "assistant", "teacher",
+            "scientist", "manager", "clerk", "trainee", "admit"
+        )):
+            continue
+
         seen.add(url)
         rows.append({
             "title": title,
             "url": url,
-            "last_date": last_date,
-            "date_extended": "extended" in low,
-            "source": LATEST_URL,
+            "last_date": last_date.isoformat(),
+            "extended": "extended" in low,
+            "discovery_source": LATEST_URL,
         })
 
-    return sorted(rows, key=lambda r: (r["last_date"], r["title"].lower()))
+    rows.sort(key=lambda x: (x["last_date"], x["title"].lower()))
+    return rows

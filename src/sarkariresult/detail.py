@@ -1,65 +1,121 @@
-from __future__ import annotations
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urldefrag, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-HEADERS = {"User-Agent": "GovernmentJobsAgent/1.2 (+responsible automated monitoring)"}
-OFFICIAL_SUFFIXES = (".gov.in", ".nic.in", ".ac.in", ".edu.in")
-KNOWN_OFFICIAL_DOMAINS = {
-    "upsc.gov.in", "upsconline.nic.in", "ssc.gov.in", "rrbapply.gov.in",
-    "indianrailways.gov.in", "isro.gov.in", "drdo.gov.in", "ncs.gov.in",
-    "iocl.com", "aai.aero", "sbi.co.in", "ibps.in"
-}
+from .parser import HEADERS
+
+OFFICIAL_DOMAIN_SUFFIXES = (
+    ".gov.in", ".nic.in", ".ac.in", ".edu.in", ".org.in", ".res.in"
+)
+
+LINK_KEYWORDS = (
+    "apply online", "apply now", "online form", "official website",
+    "notification", "advertisement", "download notification",
+    "official notification", "pdf", "application form", "registration"
+)
+
+SECTION_HINTS = (
+    "important date", "application fee", "vacancy", "eligibility",
+    "qualification", "age limit", "selection", "salary", "pay scale",
+    "how to apply", "important instruction", "exam", "syllabus",
+    "notification", "job location", "post name", "total post"
+)
 
 def fetch_detail(url):
-    r = requests.get(url, headers=HEADERS, timeout=45)
+    r = requests.get(url, headers=HEADERS, timeout=45, allow_redirects=True)
     r.raise_for_status()
-    return BeautifulSoup(r.text, "lxml"), r.url
+    soup = BeautifulSoup(r.text, "lxml")
+    return soup, r.url, r.text
 
-def domain(url):
-    return urlparse(url).netloc.lower().split(":")[0]
+def clean_visible_text(soup):
+    clone = BeautifulSoup(str(soup), "lxml")
+    for tag in clone(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+    lines = []
+    for line in clone.get_text("\n").splitlines():
+        line = " ".join(line.split())
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
 
-def is_probably_official(url):
-    d = domain(url)
-    return d in KNOWN_OFFICIAL_DOMAINS or d.endswith(OFFICIAL_SUFFIXES)
+def extract_tables(soup):
+    tables = []
+    for table in soup.find_all("table"):
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = [" ".join(c.get_text(" ", strip=True).split())
+                     for c in tr.find_all(["th", "td"])]
+            if cells:
+                rows.append(cells)
+        if rows:
+            tables.append(rows)
+    return tables
 
-def extract_detail_links(soup, base_url):
-    """Extract candidate official/application/notification links.
+def classify_domain(url):
+    host = urlparse(url).hostname or ""
+    host = host.lower()
+    if host == "sarkariresult.com" or host.endswith(".sarkariresult.com"):
+        return "sarkariresult"
+    if host.endswith(OFFICIAL_DOMAIN_SUFFIXES):
+        return "likely_official_government_or_institution"
+    return "third_party"
 
-    SarkariResult is discovery only. A link is marked official_candidate when
-    its destination matches configured government/institution domains.
-    """
-    out, seen = [], set()
+def extract_links(soup, base_url):
+    links = []
+    seen = set()
     for a in soup.find_all("a", href=True):
         text = " ".join(a.get_text(" ", strip=True).split())
-        href = urljoin(base_url, a["href"])
-        if href in seen:
+        href = a.get("href", "").strip()
+        url = urljoin(base_url, href)
+        url, _ = urldefrag(url)
+        if not url or url in seen:
             continue
+
         low = text.lower()
-        if not any(k in low for k in (
-            "apply online", "online form", "official website", "notification",
-            "advertisement", "download", "official site", "registration"
-        )):
-            continue
-        seen.add(href)
-        out.append({
-            "text": text,
-            "url": href,
-            "domain": domain(href),
-            "official_candidate": is_probably_official(href),
-        })
-    return out
+        # Also inspect href because many pages have image/icon links with
+        # weak visible text.
+        href_low = href.lower()
+        if any(k in low or k in href_low for k in LINK_KEYWORDS):
+            seen.add(url)
+            links.append({
+                "text": text,
+                "url": url,
+                "domain_class": classify_domain(url),
+            })
+    return links
 
-def extract_pdf_links(soup, base_url):
-    out=[]
-    for a in soup.find_all("a", href=True):
-        href=urljoin(base_url,a["href"])
-        if ".pdf" in href.lower():
-            out.append(href)
-    return list(dict.fromkeys(out))
+def find_best_official_links(links):
+    official = [x for x in links
+                if x["domain_class"] == "likely_official_government_or_institution"]
+    notifications = [
+        x for x in official
+        if any(k in x["text"].lower() for k in ("notification", "advertisement", "pdf", "download"))
+        or x["url"].lower().endswith(".pdf")
+    ]
+    applications = [
+        x for x in official
+        if any(k in x["text"].lower() for k in ("apply", "online form", "application", "registration"))
+    ]
+    return {
+        "official_links": official,
+        "notification_links": notifications,
+        "application_links": applications,
+    }
 
-def extract_detail_text(soup):
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-    return "\n".join(x.strip() for x in soup.get_text("\n").splitlines() if x.strip())
+def extract_detail(url, listing):
+    soup, final_url, raw_html = fetch_detail(url)
+    text = clean_visible_text(soup)
+    tables = extract_tables(soup)
+    links = extract_links(soup, final_url)
+    classified = find_best_official_links(links)
+
+    return {
+        "listing": listing,
+        "detail_url": final_url,
+        "detail_text": text,
+        "tables": tables,
+        "links": links,
+        **classified,
+        "detail_ok": len(text) > 300,
+    }
