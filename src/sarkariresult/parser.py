@@ -29,6 +29,7 @@ def parse_date(text: str):
 
 def fetch_latest():
     r = requests.get(LATEST_URL, headers=HEADERS, timeout=45)
+    print("url {}", r.url)
     r.raise_for_status()
     return BeautifulSoup(r.text, "lxml"), r.url
 
