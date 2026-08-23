@@ -10,19 +10,31 @@ from PIL import Image, ImageDraw, ImageFont
 
 try:
     import qrcode
-except ImportError:  # pragma: no cover - optional until rendering links
+except ImportError:  # pragma: no cover
     qrcode = None
 
+# Instagram portrait / 4:5
 W, H = 1080, 1350
-BG = (247, 249, 252)
+
+# V1.9.17 visual system — inspired by professional recruitment posters,
+# but generated from structured facts rather than copied artwork.
 NAVY = (13, 48, 96)
 BLUE = (24, 78, 145)
+BLUE_2 = (42, 103, 173)
 YELLOW = (248, 188, 28)
+GOLD = (238, 161, 19)
+RED = (190, 50, 50)
+GREEN = (27, 123, 86)
 DARK = (22, 30, 43)
 MUTED = (92, 105, 122)
 WHITE = (255, 255, 255)
-BORDER = (205, 216, 230)
-GREEN = (33, 115, 76)
+BG = (246, 249, 253)
+PALE_BLUE = (233, 242, 252)
+PALE_YELLOW = (255, 248, 220)
+PALE_GREEN = (232, 246, 239)
+PALE_RED = (253, 237, 237)
+BORDER = (201, 215, 232)
+LIGHT_LINE = (226, 233, 242)
 
 
 def _font(size: int, bold: bool = False):
@@ -38,21 +50,77 @@ def _font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
-F_XL = _font(62, True)
-F_TITLE = _font(48, True)
-F_H2 = _font(31, True)
-F_BODY = _font(27, False)
-F_BODY_B = _font(28, True)
-F_SMALL = _font(20, False)
-F_SMALL_B = _font(20, True)
-F_LINK = _font(24, True)
-F_QR = _font(22, True)
+F_HERO = _font(72, True)
+F_HERO_2 = _font(54, True)
+F_TITLE = _font(47, True)
+F_H1 = _font(35, True)
+F_H2 = _font(28, True)
+F_BODY_B = _font(25, True)
+F_BODY = _font(23, False)
+F_SMALL_B = _font(19, True)
+F_SMALL = _font(18, False)
+F_TINY_B = _font(15, True)
+F_TINY = _font(14, False)
+
+
+INTERNAL_PATTERNS = [
+    r"\bstatus\s*:\s*(?:pass|fail)\b",
+    r"\bquality\s*gate\s*:\s*(?:pass|fail)\b",
+    r"\bslide\s*quality\s*gate\s*:\s*(?:pass|fail)\b",
+    r"\bv(?:alidation|erification)\s*(?:status|result)\s*:\s*(?:pass|fail)\b",
+    r"\bvacancy\s+reconciliation\b",
+    r"\bextraction\s+repairs?\b",
+    r"\bparsed\s+vacancies?\s*:\s*\d+\b",
+    r"\bauthoritative\s+vacancies?\s*:\s*\d+\b",
+    r"\b(?:locked|verified)\s+facts?\b",
+    r"\bsource\s+(?:method|text|document)\b",
+    r"\bpdf\s+extraction\b",
+    r"\bqwen(?:3)?\b",
+    r"\bfacts?_used\b",
+]
+
+
+def _clean(text: Any) -> str:
+    if text is None:
+        return ""
+    s = str(text).replace("\r", "\n")
+    # Never expose raw URLs or markdown links in artwork.
+    s = re.sub(r"\[([^\]]+)\]\(https?://[^)]+\)", r"\1", s)
+    s = re.sub(r"https?://\S+", "", s, flags=re.I)
+    for p in INTERNAL_PATTERNS:
+        s = re.sub(p, "", s, flags=re.I)
+    lines = []
+    for raw in s.splitlines():
+        line = re.sub(r"^[•·●*\-]+\s*", "", raw.strip())
+        line = re.sub(r"\s+", " ", line).strip(" -:;,")
+        if not line:
+            continue
+        low = line.lower()
+        if low in {"not found", "n/a", "na", "none", "null", "unknown", "organisation not identified"}:
+            continue
+        if any(x in low for x in ("telegram", "whatsapp", "instagram", "join us", "follow us")) and len(line) < 120:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _first(*values: Any) -> str:
+    for value in values:
+        text = _clean(value)
+        if text:
+            return text
+    return ""
 
 
 def _wrap(draw, text: str, font, width: int, max_lines: int | None = None):
-    words = str(text or "").split()
+    text = _clean(text)
+    if not text:
+        return []
+    # Make slash-separated category labels breakable without changing the
+    # displayed text semantics (e.g. EWS/BC/MBC/SC/ST/PwBD).
+    text = re.sub(r"/(?=\S)", "/ ", text)
     lines, current = [], ""
-    for word in words:
+    for word in text.split():
         trial = f"{current} {word}".strip()
         if draw.textbbox((0, 0), trial, font=font)[2] <= width:
             current = trial
@@ -68,36 +136,320 @@ def _wrap(draw, text: str, font, width: int, max_lines: int | None = None):
     return lines
 
 
-def _draw_wrapped(draw, text, x, y, font, fill=DARK, width=940, gap=9, max_lines=None):
+def _text(draw, text, x, y, font, fill=DARK, width=900, gap=7, max_lines=None):
     for line in _wrap(draw, text, font, width, max_lines):
         draw.text((x, y), line, font=font, fill=fill)
         y += font.size + gap
     return y
 
 
-def _card(draw, x, y, w, h, fill=WHITE, outline=BORDER):
-    draw.rounded_rectangle((x, y, x + w, y + h), radius=24, fill=fill, outline=outline, width=2)
+def _card(draw, x, y, w, h, fill=WHITE, outline=BORDER, radius=22, width=2):
+    draw.rounded_rectangle((x, y, x + w, y + h), radius=radius, fill=fill, outline=outline, width=width)
 
 
-def _safe(text: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(text or "slides"))[:70].strip("_") or "slides"
+def _pill(draw, text, x, y, fill=YELLOW, color=NAVY, pad_x=18, pad_y=9):
+    text = _clean(text)
+    box = draw.textbbox((0, 0), text, font=F_SMALL_B)
+    tw, th = box[2] - box[0], box[3] - box[1]
+    draw.rounded_rectangle((x, y, x + tw + pad_x * 2, y + th + pad_y * 2), radius=18, fill=fill)
+    draw.text((x + pad_x, y + pad_y - 1), text, font=F_SMALL_B, fill=color)
+    return x + tw + pad_x * 2
 
 
-def _strip_internal_metadata(text: str) -> str:
-    patterns = [
-        r"status\s*:\s*(?:pass|fail)",
-        r"quality\s*gate\s*:\s*(?:pass|fail)",
-        r"slide\s*quality\s*gate\s*:\s*(?:pass|fail)",
-        r"vacancy\s+reconciliation",
-        r"extraction\s+repairs",
-        r"parsed\s+vacancies\s*:\s*\d+",
-        r"authoritative\s+vacancies\s*:\s*\d+",
-    ]
-    out = str(text or "")
-    for p in patterns:
-        out = re.sub(p, "", out, flags=re.I)
-    out = re.sub(r"\[([^\]]+)\]\(https?://[^)]+\)", r"\1", out)
-    return re.sub(r"\s{2,}", " ", out).strip(" -:;,")
+def _initials(org: str) -> str:
+    text = _clean(org)
+    if not text:
+        return "GJ"
+    m = re.search(r"\(([A-Z]{2,8})\)", text)
+    if m:
+        return m.group(1)[:4]
+    words = [w for w in re.split(r"\s+", text) if w and w.lower() not in {"ltd", "limited", "of", "the", "and"}]
+    if len(words) >= 2:
+        return "".join(w[0] for w in words[:4]).upper()
+    return text[:4].upper()
+
+
+def _short_org(org: str) -> str:
+    text = _clean(org)
+    m = re.search(r"\(([A-Z]{2,8})\)", text)
+    if m:
+        return m.group(1)
+    return text[:34]
+
+
+def _header(img, draw, org: str, number: int, total: int, kicker="GOVERNMENT RECRUITMENT"):
+    # Strong poster-like masthead.
+    draw.rectangle((0, 0, W, 116), fill=NAVY)
+    draw.ellipse((34, 18, 96, 80), fill=WHITE)
+    initials = _initials(org)
+    box = draw.textbbox((0, 0), initials, font=F_TINY_B)
+    draw.text((65 - (box[2] - box[0]) / 2, 39), initials, font=F_TINY_B, fill=NAVY)
+    _text(draw, _short_org(org) or "Government Jobs", 115, 23, F_H2, WHITE, 720, 3, 1)
+    draw.text((115, 76), kicker, font=F_TINY_B, fill=(218, 231, 246))
+    draw.text((W - 115, 34), f"{number}/{total}", font=F_SMALL_B, fill=WHITE)
+    # small gold rule
+    draw.rectangle((0, 112, W, 116), fill=YELLOW)
+
+
+def _footer(draw, text="READ THE OFFICIAL NOTIFICATION BEFORE APPLYING"):
+    draw.rectangle((0, H - 58, W, H), fill=NAVY)
+    draw.text((50, H - 39), text, font=F_TINY_B, fill=WHITE)
+    draw.text((W - 130, H - 39), "• GOVT JOB", font=F_TINY_B, fill=YELLOW)
+
+
+def _fact_rows(facts: dict, key: str) -> list[dict]:
+    rows = facts.get(key) or []
+    return [x for x in rows if isinstance(x, dict)]
+
+
+def _vacancies(facts: dict) -> list[tuple[str, str]]:
+    rows = []
+    for row in facts.get("post_vacancies") or facts.get("raw_post_vacancies") or []:
+        post = _clean(row.get("post") or row.get("post_name"))
+        number = _clean(row.get("vacancies") or row.get("total"))
+        if post and number:
+            rows.append((post, number))
+    return rows
+
+
+def _eligibility_rows(facts: dict) -> list[dict]:
+    rows = facts.get("post_facts") or facts.get("post_eligibility") or []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        post = _clean(row.get("post"))
+        qual = _clean(row.get("qualification") or row.get("eligibility"))
+        exp = _clean(row.get("experience"))
+        if post and (qual or exp):
+            out.append({"post": post, "qualification": qual, "experience": exp})
+    return out
+
+
+def _slide_bullets(slide: dict) -> list[str]:
+    return [_clean(x) for x in (slide.get("bullets") or []) if _clean(x)]
+
+
+def _date_label(value: Any) -> str:
+    text = _clean(value)
+    if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", text):
+        y, m, d = text.split("-")
+        months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        return f"{int(d):02d} {months[int(m)-1]} {y}"
+    return text
+
+
+def _stat_card(draw, x, y, w, h, label, value, accent=BLUE, fill=WHITE, icon=None):
+    _card(draw, x, y, w, h, fill, BORDER, 20, 2)
+    draw.rectangle((x, y, x + 8, y + h), fill=accent)
+    if icon:
+        draw.ellipse((x + 22, y + 20, x + 62, y + 60), fill=accent)
+        draw.text((x + 33, y + 27), icon, font=F_SMALL_B, fill=WHITE)
+        tx = x + 76
+    else:
+        tx = x + 24
+    draw.text((tx, y + 20), label.upper(), font=F_TINY_B, fill=accent)
+    _text(draw, value, tx, y + 53, F_BODY_B if len(value) < 38 else F_SMALL_B, DARK, w - (tx - x) - 22, 5, 3)
+
+
+def _draw_bullets(draw, bullets, x, y, w, bottom_y, accent=BLUE, max_items=6, font=F_BODY, text_fill=DARK):
+    items = [b for b in bullets if b][:max_items]
+    for item in items:
+        if y > bottom_y - 50:
+            break
+        draw.ellipse((x, y + 8, x + 12, y + 20), fill=accent)
+        y = _text(draw, item, x + 28, y, font, text_fill, w - 28, 6, 3) + 10
+    return y
+
+
+def _draw_title(img, draw, slide, facts, number, total):
+    org = _clean(facts.get("organisation"))
+    _header(img, draw, org, number, total, "GOVERNMENT RECRUITMENT • 2026")
+    y = 155
+    draw.text((55, y), "RECRUITMENT", font=F_HERO, fill=NAVY)
+    draw.text((55, y + 76), "2026–27", font=F_HERO_2, fill=BLUE)
+    y += 150
+
+    title = _clean(facts.get("post") or slide.get("headline") or "Government Recruitment")
+    # Prefer a compact post line over a giant source title.
+    rows = _vacancies(facts)
+    names = [p for p, _ in rows]
+    if names:
+        compact = " • ".join(names[:3])
+        if len(names) > 3:
+            compact += f" • +{len(names)-3} more posts"
+    else:
+        compact = _clean(slide.get("subtitle") or title)
+
+    _pill(draw, "APPLICATION WINDOW", 55, y, PALE_YELLOW, NAVY)
+    y += 67
+    _text(draw, compact, 55, y, F_H1, DARK, 970, 8, 4)
+    y += min(170, max(90, len(_wrap(draw, compact, F_H1, 970, 4)) * 42 + 30))
+
+    total_v = _clean(facts.get("total_vacancies") or facts.get("combined_vacancies"))
+    deadline = _date_label(facts.get("application_end"))
+    start = _date_label(facts.get("application_start"))
+
+    if total_v:
+        _card(draw, 55, y, 470, 190, NAVY, NAVY, 24, 2)
+        draw.text((85, y + 28), "TOTAL VACANCIES", font=F_SMALL_B, fill=(214, 228, 245))
+        draw.text((82, y + 66), total_v, font=F_HERO, fill=YELLOW)
+        draw.text((85, y + 145), "verified recruitment posts", font=F_SMALL, fill=WHITE)
+
+    if deadline:
+        _card(draw, 545, y, 480, 190, PALE_RED, (236, 192, 192), 24, 2)
+        draw.text((575, y + 28), "APPLICATION DEADLINE", font=F_SMALL_B, fill=RED)
+        _text(draw, deadline, 575, y + 69, F_H1, DARK, 420, 6, 2)
+        if start:
+            draw.text((575, y + 140), f"Opens: {start}", font=F_SMALL_B, fill=MUTED)
+
+    y += 220
+    # CTA ribbon
+    _card(draw, 55, y, 970, 130, WHITE, BORDER, 22, 2)
+    draw.rectangle((55, y, 65, y + 130), fill=YELLOW)
+    draw.text((90, y + 23), "JOB SEEKER CHECKLIST", font=F_SMALL_B, fill=BLUE)
+    _draw_bullets(draw, [
+        "Check the post-wise qualification before applying.",
+        "Use only the official notification/application links.",
+    ], 90, y + 55, 900, y + 118, BLUE, 2, F_SMALL)
+    _footer(draw)
+
+
+def _draw_vacancies(img, draw, slide, facts, number, total):
+    org = _clean(facts.get("organisation"))
+    _header(img, draw, org, number, total, "RECRUITMENT • POST-WISE VACANCIES")
+    draw.text((55, 150), "2,005", font=F_HERO, fill=NAVY) if str(facts.get("total_vacancies")) == "2005" else None
+    headline = _clean(slide.get("headline") or "VACANCY BREAKDOWN")
+    if str(facts.get("total_vacancies") or "") != "2005":
+        draw.text((55, 150), headline, font=F_TITLE, fill=NAVY)
+        y = 225
+    else:
+        draw.text((55, 225), headline, font=F_H1, fill=BLUE)
+        y = 275
+
+    rows = _vacancies(facts)
+    if not rows:
+        bullets = _slide_bullets(slide)
+        _draw_bullets(draw, bullets, 70, y, 930, 1150, BLUE, 6, F_BODY_B)
+    else:
+        # Poster-like table.
+        _card(draw, 45, y, 990, 62, NAVY, NAVY, 14, 1)
+        draw.text((70, y + 20), "POST", font=F_SMALL_B, fill=WHITE)
+        draw.text((930, y + 20), "VACANCIES", font=F_SMALL_B, fill=WHITE, anchor="ra")
+        y += 70
+        for idx, (post, count) in enumerate(rows, 1):
+            h = 112 if len(post) < 43 else 135
+            fill = WHITE if idx % 2 else PALE_BLUE
+            _card(draw, 45, y, 990, h, fill, BORDER, 16, 1)
+            draw.ellipse((70, y + 28, 116, y + 74), fill=YELLOW)
+            draw.text((93, y + 38), str(idx), font=F_SMALL_B, fill=NAVY, anchor="mm")
+            _text(draw, post, 135, y + 25, F_BODY_B if len(post) < 45 else F_SMALL_B, DARK, 700, 5, 2)
+            draw.text((970, y + 37), str(count), font=F_H1, fill=RED, anchor="ra")
+            y += h + 10
+        _card(draw, 45, y + 5, 990, 95, NAVY, NAVY, 18, 1)
+        draw.text((75, y + 34), "TOTAL", font=F_H2, fill=WHITE)
+        draw.text((970, y + 29), _clean(facts.get("total_vacancies") or ""), font=F_H1, fill=YELLOW, anchor="ra")
+    _footer(draw)
+
+
+def _draw_eligibility(img, draw, slide, facts, number, total):
+    org = _clean(facts.get("organisation"))
+    _header(img, draw, org, number, total, "WHO CAN APPLY?")
+    draw.text((55, 150), "ELIGIBILITY", font=F_TITLE, fill=NAVY)
+    draw.text((58, 210), "Post-wise qualification snapshot", font=F_H2, fill=MUTED)
+
+    rows = _eligibility_rows(facts)
+    if not rows:
+        rows = [{"post": "Qualification", "qualification": b, "experience": ""} for b in _slide_bullets(slide)]
+
+    y = 270
+    cols = 2
+    gap = 18
+    card_w = (970 - gap) // cols
+    for i, row in enumerate(rows[:6]):
+        col = i % cols
+        row_y = y + (i // cols) * 255
+        x = 55 + col * (card_w + gap)
+        _card(draw, x, row_y, card_w, 235, WHITE, BORDER, 20, 2)
+        draw.rectangle((x, row_y, x + card_w, row_y + 10), fill=YELLOW if i % 2 == 0 else BLUE)
+        post = row["post"]
+        _text(draw, post, x + 22, row_y + 25, F_SMALL_B, NAVY, card_w - 44, 5, 2)
+        qual = row.get("qualification") or "Qualification details in official notification."
+        _text(draw, qual, x + 22, row_y + 85, F_SMALL, DARK, card_w - 44, 5, 5)
+        if row.get("experience"):
+            _text(draw, "Experience: " + row["experience"], x + 22, row_y + 184, F_TINY, MUTED, card_w - 44, 4, 2)
+
+    common = _clean(facts.get("experience"))
+    if common and y + ((len(rows[:6]) + 1) // 2) * 255 < 1120:
+        _pill(draw, "CHECK THE COMPLETE NOTIFICATION", 55, 1100, PALE_YELLOW, NAVY)
+    _footer(draw)
+
+
+def _draw_age_pay_fee(img, draw, slide, facts, number, total):
+    org = _clean(facts.get("organisation"))
+    _header(img, draw, org, number, total, "AGE • PAY • APPLICATION FEE")
+    draw.text((55, 150), "AT A GLANCE", font=F_TITLE, fill=NAVY)
+
+    age = _clean(facts.get("age_limit"))
+    pay = _clean(facts.get("pay_scale") or facts.get("salary"))
+    fee = _clean(facts.get("application_fee"))
+    bullets = _slide_bullets(slide)
+    if not age:
+        age = next((x for x in bullets if "age" in x.lower()), "See official notification")
+    if not pay:
+        pay = next((x for x in bullets if any(k in x.lower() for k in ("pay", "salary", "level"))), "See official notification")
+    if not fee:
+        fee = next((x for x in bullets if "fee" in x.lower() or "₹" in x), "See official notification")
+
+    _stat_card(draw, 55, 225, 300, 235, "AGE LIMIT", age, BLUE, PALE_BLUE, "A")
+    _stat_card(draw, 390, 225, 300, 235, "PAY / SALARY", pay, GREEN, PALE_GREEN, "₹")
+    _stat_card(draw, 725, 225, 300, 235, "APPLICATION FEE", fee, RED, PALE_RED, "₹")
+
+    # Additional verified points become a lower, editorial-style panel.
+    _card(draw, 55, 495, 970, 570, WHITE, BORDER, 24, 2)
+    draw.text((85, 530), "IMPORTANT NOTES", font=F_H2, fill=NAVY)
+    useful = []
+    for item in bullets:
+        low = item.lower()
+        if not any(k in low for k in ("age", "pay", "salary", "fee")):
+            useful.append(item)
+    if facts.get("experience"):
+        useful.insert(0, "Experience: " + _clean(facts.get("experience")))
+    if not useful:
+        useful = ["Category-wise relaxations and other conditions apply as stated in the official notification."]
+    _draw_bullets(draw, useful, 90, 590, 900, 1015, BLUE, 5, F_BODY)
+
+    _pill(draw, "VERIFY CATEGORY-WISE CONDITIONS", 55, 1090, PALE_YELLOW, NAVY)
+    _footer(draw)
+
+
+def _draw_dates_selection(img, draw, slide, facts, number, total):
+    org = _clean(facts.get("organisation"))
+    _header(img, draw, org, number, total, "DATES • SELECTION PROCESS")
+    draw.text((55, 150), "IMPORTANT DATES", font=F_TITLE, fill=NAVY)
+
+    start = _date_label(facts.get("application_start"))
+    end = _date_label(facts.get("application_end"))
+    y = 235
+    # Timeline
+    draw.line((115, y + 42, 115, y + 260), fill=BLUE, width=6)
+    for cy, label, value, accent in [
+        (y, "APPLICATION OPENS", start, GREEN),
+        (y + 180, "LAST DATE TO APPLY", end, RED),
+    ]:
+        draw.ellipse((91, cy + 18, 139, cy + 66), fill=accent)
+        draw.ellipse((104, cy + 31, 126, cy + 53), fill=WHITE)
+        _text(draw, label, 165, cy + 8, F_SMALL_B, accent, 320, 4, 1)
+        _text(draw, value or "See official notification", 165, cy + 43, F_H2, DARK, 470, 5, 2)
+
+    _card(draw, 55, 555, 970, 485, NAVY, NAVY, 24, 2)
+    draw.text((85, 590), "SELECTION PROCESS", font=F_H2, fill=YELLOW)
+    selection = _clean(facts.get("selection_process"))
+    if not selection:
+        selection = next((b for b in _slide_bullets(slide) if "selection" in b.lower() or "exam" in b.lower() or "test" in b.lower()), "See official notification for selection stages.")
+    _draw_bullets(draw, [selection] + [b for b in _slide_bullets(slide) if b != selection], 90, 645, 900, 1000, WHITE, 5, F_BODY, WHITE)
+    _pill(draw, "SELECTION MAY DIFFER BY POST", 55, 1085, PALE_YELLOW, NAVY)
+    _footer(draw)
 
 
 def _domain(url: str) -> str:
@@ -107,96 +459,104 @@ def _domain(url: str) -> str:
         return "Official source"
 
 
-def _make_qr(url: str, size: int = 210):
+def _make_qr(url: str, size=205):
     if qrcode is None:
         return None
     qr = qrcode.QRCode(version=None, box_size=7, border=2)
     qr.add_data(url)
     qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-    return img.resize((size, size))
+    image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    return image.resize((size, size))
 
 
-def _draw_header(draw, organisation: str, number: int, total: int):
-    draw.rectangle((0, 0, W, 112), fill=NAVY)
-    if organisation:
-        _draw_wrapped(draw, organisation, 55, 26, F_H2, WHITE, 760, 2, 1)
-    draw.text((W - 125, 36), f"{number}/{total}", font=F_SMALL_B, fill=WHITE)
-    draw.text((55, 82), "GOVERNMENT RECRUITMENT", font=F_SMALL, fill=(215, 228, 244))
+def _draw_apply_links(img, draw, slide, facts, number, total):
+    org = _clean(facts.get("organisation"))
+    _header(img, draw, org, number, total, "READY TO APPLY?")
+    draw.text((55, 150), "APPLY THE RIGHT WAY", font=F_TITLE, fill=NAVY)
+    draw.text((58, 212), "Read → Check → Apply", font=F_H2, fill=MUTED)
+
+    # Three-step CTA strip.
+    labels = [("01", "CHECK ELIGIBILITY"), ("02", "READ NOTIFICATION"), ("03", "APPLY ONLINE")]
+    x = 55
+    for i, (num, label) in enumerate(labels):
+        w = 305 if i < 2 else 306
+        _card(draw, x, 275, w, 112, NAVY if i == 2 else WHITE, NAVY if i == 2 else BORDER, 18, 2)
+        draw.text((x + 22, 298), num, font=F_H1, fill=YELLOW if i == 2 else BLUE)
+        _text(draw, label, x + 82, 301, F_SMALL_B, WHITE if i == 2 else DARK, w - 105, 4, 2)
+        x += w + 18
+
+    links = [x for x in (slide.get("links") or facts.get("official_links") or []) if isinstance(x, dict) and x.get("url")]
+    # Deduplicate and prioritize application link if label indicates it.
+    unique = []
+    seen = set()
+    for link in links:
+        url = str(link.get("url")).strip()
+        if url and url not in seen:
+            seen.add(url)
+            unique.append({"label": _clean(link.get("label") or "Official Link"), "url": url})
+    links = unique[:2]
+
+    y = 435
+    if links:
+        card_w = 465
+        for i, link in enumerate(links):
+            xx = 55 + i * 495
+            _card(draw, xx, y, card_w, 480, WHITE, BORDER, 22, 2)
+            qr = _make_qr(link["url"], 220)
+            if qr is not None:
+                img.paste(qr, (xx + (card_w - 220) // 2, y + 32))
+            label = link["label"] or "Official Link"
+            if "notification" in label.lower():
+                label = "OFFICIAL NOTIFICATION"
+            elif "apply" in label.lower():
+                label = "OFFICIAL APPLICATION"
+            else:
+                label = "OFFICIAL SOURCE"
+            draw.text((xx + 30, y + 275), label, font=F_H2, fill=NAVY)
+            draw.text((xx + 30, y + 320), _domain(link["url"]), font=F_SMALL_B, fill=BLUE)
+            draw.text((xx + 30, y + 362), "SCAN TO OPEN", font=F_TINY_B, fill=MUTED)
+            draw.line((xx + 30, y + 405, xx + card_w - 30, y + 405), fill=LIGHT_LINE, width=2)
+            draw.text((xx + 30, y + 423), "Use only the official source", font=F_SMALL, fill=DARK)
+    else:
+        _card(draw, 55, y, 970, 360, PALE_BLUE, BORDER, 22, 2)
+        _text(draw, "Official application / notification links are provided in the post data. Open the official notification before submitting an application.", 90, y + 50, F_BODY_B, DARK, 900, 8, 6)
+
+    _card(draw, 55, 955, 970, 155, NAVY, NAVY, 22, 2)
+    draw.text((85, 985), "FINAL CHECK", font=F_SMALL_B, fill=YELLOW)
+    _draw_bullets(draw, [
+        "Match your qualification and age with the official notification.",
+        "Keep required documents ready before submitting the form.",
+    ], 90, 1025, 900, 1090, WHITE, 2, F_SMALL, WHITE)
+    _footer(draw, "SCAN THE OFFICIAL SOURCE • DO NOT RELY ON THIRD-PARTY LINKS")
 
 
-def _draw_footer(draw):
-    draw.rectangle((0, H - 62, W, H), fill=NAVY)
-    draw.text((55, H - 43), "Verify eligibility, dates and conditions in the official notification.", font=F_SMALL, fill=WHITE)
-
-
-def _draw_standard(draw, slide, y):
-    headline = _strip_internal_metadata(slide.get("headline", ""))
-    subtitle = _strip_internal_metadata(slide.get("subtitle", ""))
-    bullets = [_strip_internal_metadata(x) for x in slide.get("bullets", []) if _strip_internal_metadata(x)]
-    y = _draw_wrapped(draw, headline, 55, y, F_XL if len(headline) < 50 else F_TITLE, NAVY, 970, 10, 4)
-    y += 34
-    if subtitle:
-        y = _draw_wrapped(draw, subtitle, 58, y, F_H2, MUTED, 930, 8, 3) + 20
-    for bullet in bullets[:6]:
-        if y > H - 190:
-            break
-        _card(draw, 55, y, 970, 105, WHITE)
-        draw.ellipse((82, y + 39, 96, y + 53), fill=YELLOW)
-        _draw_wrapped(draw, bullet, 120, y + 27, F_BODY_B if len(bullet) < 75 else F_BODY, DARK, 860, 7, 2)
-        y += 125
-
-
-def _draw_links(img, draw, slide, y):
-    headline = _strip_internal_metadata(slide.get("headline") or "Official Links")
-    subtitle = _strip_internal_metadata(slide.get("subtitle") or "Use the QR codes to open the official recruitment documents.")
-    y = _draw_wrapped(draw, headline, 55, y, F_XL if len(headline) < 50 else F_TITLE, NAVY, 970, 10, 2)
-    y += 25
-    y = _draw_wrapped(draw, subtitle, 58, y, F_H2, MUTED, 930, 8, 2) + 18
-
-    links = [x for x in (slide.get("links") or []) if isinstance(x, dict) and x.get("url")]
-    # Do not render raw URLs. Human-friendly labels + domain + QR are rendered instead.
-    if not links:
-        _card(draw, 55, y, 970, 150)
-        _draw_wrapped(draw, "See the official notification for the application procedure.", 85, y + 35, F_BODY_B, DARK, 900, 8, 3)
-        return
-
-    card_w = 300
-    gap = 25
-    x_positions = [55, 55 + card_w + gap, 55 + 2 * (card_w + gap)]
-    for i, link in enumerate(links[:3]):
-        x = x_positions[i]
-        _card(draw, x, y, card_w, 370, WHITE)
-        qr = _make_qr(str(link["url"]), 205)
-        if qr is not None:
-            img_x = x + (card_w - 205) // 2
-            img.paste(qr, (img_x, y + 28))
-        else:
-            draw.text((x + 80, y + 100), "QR unavailable", font=F_SMALL_B, fill=MUTED)
-        label = _strip_internal_metadata(link.get("label") or f"Official Link {i + 1}")
-        if label.lower() == "official notification":
-            label = f"Official Notification {i + 1}"
-        _draw_wrapped(draw, label, x + 18, y + 245, F_LINK, DARK, card_w - 36, 5, 2)
-        _draw_wrapped(draw, _domain(str(link["url"])), x + 18, y + 315, F_SMALL, MUTED, card_w - 36, 5, 1)
-
-    note_y = y + 395
-    note = _strip_internal_metadata(slide.get("link_note") or "Scan a QR code to open the official source.")
-    _draw_wrapped(draw, note, 58, note_y, F_BODY_B, GREEN, 930, 8, 2)
-
-
-def render_slide(slide: dict[str, Any], organisation: str, number: int, total: int, path: Path):
+def render_slide(slide: dict[str, Any], facts: dict, number: int, total: int, path: Path):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
-    _draw_header(draw, organisation, number, total)
-
     slide_type = str(slide.get("type") or "").lower()
-    if slide_type == "apply_links" or slide.get("links"):
-        _draw_links(img, draw, slide, 160)
+    if slide_type == "title":
+        _draw_title(img, draw, slide, facts, number, total)
+    elif slide_type == "vacancies":
+        _draw_vacancies(img, draw, slide, facts, number, total)
+    elif slide_type == "eligibility":
+        _draw_eligibility(img, draw, slide, facts, number, total)
+    elif slide_type == "age_pay_fee":
+        _draw_age_pay_fee(img, draw, slide, facts, number, total)
+    elif slide_type == "dates_selection":
+        _draw_dates_selection(img, draw, slide, facts, number, total)
+    elif slide_type == "apply_links":
+        _draw_apply_links(img, draw, slide, facts, number, total)
     else:
-        _draw_standard(draw, slide, 160)
-
-    _draw_footer(draw)
+        # Safe fallback retains the creative masthead and never exposes QA text.
+        _header(img, draw, str(facts.get("organisation") or ""), number, total)
+        draw.text((55, 155), _clean(slide.get("headline") or "Recruitment Details"), font=F_TITLE, fill=NAVY)
+        _draw_bullets(draw, _slide_bullets(slide), 70, 245, 930, 1160, BLUE, 6, F_BODY_B)
+        _footer(draw)
     img.save(path, quality=95)
+
+
+def _safe(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(text or "slides"))[:70].strip("_") or "slides"
 
 
 def render_qwen_plan(plan_path: str | Path, output_dir: str | Path, job_index: int | None = None) -> list[Path]:
@@ -205,8 +565,7 @@ def render_qwen_plan(plan_path: str | Path, output_dir: str | Path, job_index: i
     output.mkdir(parents=True, exist_ok=True)
     rendered: list[Path] = []
 
-    jobs = data.get("jobs", [])
-    for job in jobs:
+    for job in data.get("jobs", []):
         if job_index is not None and job.get("job_index") != job_index:
             continue
         if job.get("presentation_ready") is False:
@@ -216,12 +575,12 @@ def render_qwen_plan(plan_path: str | Path, output_dir: str | Path, job_index: i
         if not slides:
             continue
         facts = job.get("locked_facts") or {}
-        organisation = str(facts.get("organisation") or "")
+        organisation = _clean(facts.get("organisation"))
         stem = _safe(organisation or f"job_{job.get('job_index', 1)}")
         job_dir = output / f"{int(job.get('job_index', 1)):02d}_{stem}"
         job_dir.mkdir(parents=True, exist_ok=True)
         for pos, slide in enumerate(slides, 1):
             path = job_dir / f"{pos:02d}_{stem}.png"
-            render_slide(slide, organisation, pos, len(slides), path)
+            render_slide(slide, facts, pos, len(slides), path)
             rendered.append(path)
     return rendered
