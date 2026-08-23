@@ -181,7 +181,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.17", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.18", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

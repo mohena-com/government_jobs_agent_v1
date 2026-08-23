@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
 from .parser import find_latest_listings
@@ -6,7 +6,19 @@ from .detail import extract_detail
 
 IST = ZoneInfo("Asia/Kolkata")
 
-def crawl(max_jobs=None, only=None):
+def _published_date(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    # SarkariResult commonly uses: "05 August 2026 | 11:13 PM"
+    for fmt in ("%d %B %Y", "%d %b %Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text.split("|")[0].strip(), fmt).date()
+        except ValueError:
+            pass
+    return None
+
+def crawl(max_jobs=None, only=None, published_on: date | None = None):
     today = datetime.now(IST).date()
     listings = find_latest_listings(today)
 
@@ -38,5 +50,13 @@ def crawl(max_jobs=None, only=None):
                 "error": str(e),
             }
         results.append(detail)
+
+    if published_on is not None:
+        filtered = []
+        for item in results:
+            published = _published_date(item.get("post_update"))
+            if published == published_on:
+                filtered.append(item)
+        results = filtered
 
     return today, results

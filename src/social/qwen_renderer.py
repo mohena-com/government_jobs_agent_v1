@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover
 # Instagram portrait / 4:5
 W, H = 1080, 1350
 
-# V1.9.17 visual system — inspired by professional recruitment posters,
+# V1.9.18 visual system — inspired by professional recruitment posters,
 # but generated from structured facts rather than copied artwork.
 NAVY = (13, 48, 96)
 BLUE = (24, 78, 145)
@@ -230,6 +230,85 @@ def _slide_bullets(slide: dict) -> list[str]:
     return [_clean(x) for x in (slide.get("bullets") or []) if _clean(x)]
 
 
+def _compact_qualification(text: str, max_chars: int = 190) -> str:
+    """Presentation-only condensation; never changes locked facts."""
+    s = _clean(text)
+    if not s:
+        return "Qualification as per official notification."
+    replacements = [
+        (r"full\s*time\s+four\s+years[’']?\s+graduation\s+degree\s+in", "4-year full-time degree in"),
+        (r"full\s*time\s+four\s+years[’']?\s+graduation\s+degree", "4-year full-time degree"),
+        (r"as\s+a\s+regular\s+student\s+or\s+AMIE\s+in", "or AMIE in"),
+        (r"as\s+a\s+regular\s+student\s+or\s+AMIE", "or AMIE"),
+        (r"from\s+a\s+University\s*/?\s*Institution.*?(?:recognized|equivalent)", "from a recognized institution"),
+        (r"established\s+by\s+Law\s+in\s+India\s+and\s+recognized", "recognized"),
+        (r"the\s+date\s+of\s+declaration\s+of\s+result.*", "qualification must be valid by document verification"),
+        (r"including\s+computer\s+qualification\s*\(if\s+prescribed\)\s*", "Computer qualification where prescribed. "),
+        (r"at\s+the\s+time\s+fixed\s+for\s+documents\s+verification.*", ""),
+    ]
+    for pat, repl in replacements:
+        s = re.sub(pat, repl, s, flags=re.I)
+    s = re.sub(r"\s+", " ", s).strip(" .;:")
+    if len(s) > max_chars:
+        # Prefer a complete sentence/phrase boundary over arbitrary truncation.
+        cut = s[:max_chars]
+        boundary = max(cut.rfind(". "), cut.rfind("; "), cut.rfind(", "))
+        if boundary >= int(max_chars * 0.60):
+            cut = cut[:boundary]
+        s = cut.rstrip(" .;,") + "…"
+    return s
+
+
+def _compact_age(text: str) -> str:
+    s = _clean(text)
+    if not s:
+        return "See official notification."
+    ranges = re.findall(r"\b(?:18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60)\s*(?:-|–|—|to)\s*(?:18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60)\s*years?", s, flags=re.I)
+    maxes = re.findall(r"(?:maximum|max\.?\s*age)\s*[:\-]?\s*(\d{2})\s*years?", s, flags=re.I)
+    mins = re.findall(r"(?:minimum|min\.?\s*age)\s*[:\-]?\s*(\d{2})\s*years?", s, flags=re.I)
+    if ranges:
+        return ranges[0]
+    if mins and maxes:
+        return f"{mins[0]}–{maxes[0]} years"
+    if maxes:
+        return f"Max {maxes[0]} years"
+    m = re.search(r"\b\d{2}\s*years?\b", s, re.I)
+    return m.group(0) if m else "See official notification."
+
+
+def _compact_pay(text: str) -> str:
+    s = _clean(text)
+    if not s:
+        return "See official notification."
+    parts = []
+    for pat in [r"Pay\s*Level\s*[-:]?\s*([0-9]+)", r"Level[-:]?\s*([0-9]+)", r"Basic(?: Pay)?\s*[:\-]?\s*(?:₹\s*)?[\d,]+(?:\s*[–-]\s*(?:₹\s*)?[\d,]+)?", r"₹\s*[\d,]+(?:\s*[–-]\s*₹\s*[\d,]+)?(?:\s*(?:per month|/month))?"]:
+        m = re.search(pat, s, re.I)
+        if m:
+            value = m.group(0).strip()
+            if value not in parts:
+                parts.append(value)
+    if parts:
+        return " • ".join(parts[:2])
+    return _compact_qualification(s, 80)
+
+
+def _compact_fee(text: str) -> str:
+    s = _clean(text)
+    if not s:
+        return "See official notification."
+    # Preserve category amounts while dropping source boilerplate.
+    hits = re.findall(r"(?:General|GEN|UR|EWS|OBC|BC|MBC|SC|ST|PwBD|PH|Ex[- ]?Servicemen)[^\n;:]*?(?:₹\s*)?[\d,]+\s*/?-?", s, re.I)
+    if hits:
+        return " • ".join(re.sub(r"\s+", " ", h).strip(" .") for h in hits[:5])
+    amounts = re.findall(r"₹\s*[\d,]+", s)
+    return " / ".join(amounts[:4]) if amounts else _compact_qualification(s, 90)
+
+
+def _post_match(a: str, b: str) -> bool:
+    na, nb = re.sub(r"[^a-z0-9]+", " ", a.lower()).strip(), re.sub(r"[^a-z0-9]+", " ", b.lower()).strip()
+    return na == nb or na in nb or nb in na
+
+
 def _date_label(value: Any) -> str:
     text = _clean(value)
     if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", text):
@@ -356,72 +435,73 @@ def _draw_eligibility(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "WHO CAN APPLY?")
     draw.text((55, 150), "ELIGIBILITY", font=F_TITLE, fill=NAVY)
-    draw.text((58, 210), "Post-wise qualification snapshot", font=F_H2, fill=MUTED)
+    draw.text((58, 210), "Essential qualification by post", font=F_H2, fill=MUTED)
 
-    rows = _eligibility_rows(facts)
-    if not rows:
-        rows = [{"post": "Qualification", "qualification": b, "experience": ""} for b in _slide_bullets(slide)]
+    eligibility = _eligibility_rows(facts)
+    vacancies = _vacancies(facts)
+    # Drive card count from verified vacancy rows so every verified post gets a
+    # visual slot, even when the qualification extraction missed one row.
+    ordered = []
+    if vacancies:
+        for post, _ in vacancies:
+            match = next((r for r in eligibility if _post_match(post, r.get("post", ""))), None)
+            ordered.append({
+                "post": post,
+                "qualification": (match or {}).get("qualification", ""),
+                "experience": (match or {}).get("experience", ""),
+            })
+    else:
+        ordered = eligibility[:6] or [{"post": "Qualification", "qualification": b, "experience": ""} for b in _slide_bullets(slide)[:6]]
 
     y = 270
-    cols = 2
     gap = 18
-    card_w = (970 - gap) // cols
-    for i, row in enumerate(rows[:6]):
-        col = i % cols
-        row_y = y + (i // cols) * 255
+    card_w = (970 - gap) // 2
+    card_h = 190
+    for i, row in enumerate(ordered[:6]):
+        col = i % 2
+        row_y = y + (i // 2) * (card_h + 16)
         x = 55 + col * (card_w + gap)
-        _card(draw, x, row_y, card_w, 235, WHITE, BORDER, 20, 2)
-        draw.rectangle((x, row_y, x + card_w, row_y + 10), fill=YELLOW if i % 2 == 0 else BLUE)
-        post = row["post"]
-        _text(draw, post, x + 22, row_y + 25, F_SMALL_B, NAVY, card_w - 44, 5, 2)
-        qual = row.get("qualification") or "Qualification details in official notification."
-        _text(draw, qual, x + 22, row_y + 85, F_SMALL, DARK, card_w - 44, 5, 5)
+        _card(draw, x, row_y, card_w, card_h, WHITE, BORDER, 18, 2)
+        draw.rectangle((x, row_y, x + card_w, row_y + 9), fill=YELLOW if i % 2 == 0 else BLUE)
+        _text(draw, row["post"], x + 20, row_y + 20, F_SMALL_B, NAVY, card_w - 40, 4, 2)
+        qual = _compact_qualification(row.get("qualification") or "Qualification details in official notification.", 205)
+        _text(draw, qual, x + 20, row_y + 72, F_TINY if len(qual) > 150 else F_SMALL, DARK, card_w - 40, 4, 4)
         if row.get("experience"):
-            _text(draw, "Experience: " + row["experience"], x + 22, row_y + 184, F_TINY, MUTED, card_w - 44, 4, 2)
+            exp = _compact_qualification("Experience: " + row["experience"], 100)
+            _text(draw, exp, x + 20, row_y + 150, F_TINY, MUTED, card_w - 40, 3, 2)
 
-    common = _clean(facts.get("experience"))
-    if common and y + ((len(rows[:6]) + 1) // 2) * 255 < 1120:
-        _pill(draw, "CHECK THE COMPLETE NOTIFICATION", 55, 1100, PALE_YELLOW, NAVY)
+    _pill(draw, "ONLY ESSENTIAL REQUIREMENTS SHOWN • SEE NOTIFICATION FOR FULL CONDITIONS", 55, 1095, PALE_YELLOW, NAVY)
     _footer(draw)
-
 
 def _draw_age_pay_fee(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "AGE • PAY • APPLICATION FEE")
     draw.text((55, 150), "AT A GLANCE", font=F_TITLE, fill=NAVY)
 
-    age = _clean(facts.get("age_limit"))
-    pay = _clean(facts.get("pay_scale") or facts.get("salary"))
-    fee = _clean(facts.get("application_fee"))
-    bullets = _slide_bullets(slide)
-    if not age:
-        age = next((x for x in bullets if "age" in x.lower()), "See official notification")
-    if not pay:
-        pay = next((x for x in bullets if any(k in x.lower() for k in ("pay", "salary", "level"))), "See official notification")
-    if not fee:
-        fee = next((x for x in bullets if "fee" in x.lower() or "₹" in x), "See official notification")
+    age = _compact_age(facts.get("age_limit"))
+    pay = _compact_pay(facts.get("pay_scale") or facts.get("salary"))
+    fee = _compact_fee(facts.get("application_fee"))
 
-    _stat_card(draw, 55, 225, 300, 235, "AGE LIMIT", age, BLUE, PALE_BLUE, "A")
-    _stat_card(draw, 390, 225, 300, 235, "PAY / SALARY", pay, GREEN, PALE_GREEN, "₹")
-    _stat_card(draw, 725, 225, 300, 235, "APPLICATION FEE", fee, RED, PALE_RED, "₹")
+    _stat_card(draw, 55, 225, 300, 220, "AGE LIMIT", age, BLUE, PALE_BLUE, "A")
+    _stat_card(draw, 390, 225, 300, 220, "PAY / SALARY", pay, GREEN, PALE_GREEN, "₹")
+    _stat_card(draw, 725, 225, 300, 220, "APPLICATION FEE", fee, RED, PALE_RED, "₹")
 
-    # Additional verified points become a lower, editorial-style panel.
-    _card(draw, 55, 495, 970, 570, WHITE, BORDER, 24, 2)
-    draw.text((85, 530), "IMPORTANT NOTES", font=F_H2, fill=NAVY)
-    useful = []
-    for item in bullets:
+    # Use the remaining space for only a few useful, compact conditions.
+    _card(draw, 55, 480, 970, 480, WHITE, BORDER, 24, 2)
+    draw.text((85, 515), "KEY CONDITIONS", font=F_H2, fill=NAVY)
+    bullets = []
+    for item in _slide_bullets(slide):
         low = item.lower()
-        if not any(k in low for k in ("age", "pay", "salary", "fee")):
-            useful.append(item)
-    if facts.get("experience"):
-        useful.insert(0, "Experience: " + _clean(facts.get("experience")))
-    if not useful:
-        useful = ["Category-wise relaxations and other conditions apply as stated in the official notification."]
-    _draw_bullets(draw, useful, 90, 590, 900, 1015, BLUE, 5, F_BODY)
-
-    _pill(draw, "VERIFY CATEGORY-WISE CONDITIONS", 55, 1090, PALE_YELLOW, NAVY)
+        if any(k in low for k in ("age", "pay", "salary", "fee", "advertisement", "rectt", "notification")):
+            continue
+        item = _compact_qualification(item, 150)
+        if item and item not in bullets:
+            bullets.append(item)
+    if not bullets:
+        bullets = ["Category-wise age relaxation applies as specified in the official notification."]
+    _draw_bullets(draw, bullets[:4], 90, 585, 900, 875, BLUE, 4, F_BODY)
+    _pill(draw, "VERIFY CATEGORY-WISE CONDITIONS", 55, 1000, PALE_YELLOW, NAVY)
     _footer(draw)
-
 
 def _draw_dates_selection(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))

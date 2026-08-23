@@ -26,6 +26,7 @@ p.add_argument("--allow-qwen-on-failed-gate", action="store_true", help="Do not 
 p.add_argument("--verify-official", action="store_true", help="Download and verify official notification PDFs before Qwen")
 p.add_argument("--render-qwen", help="Render a Qwen JSON plan after it passes the slide-level gate")
 p.add_argument("--render-output", default="social/rendered", help="Directory for rendered Qwen Instagram slides")
+p.add_argument("--published-today", action="store_true", help="Crawl only jobs whose Published/Updated date is today (IST)")
 
 args = p.parse_args()
 
@@ -65,7 +66,10 @@ if args.docx:
     raise SystemExit(0)
 
 # Existing V1.6 crawler path remains intact.
-today, results = crawl(max_jobs=args.max_jobs, only=args.only)
+from datetime import datetime
+from zoneinfo import ZoneInfo
+published_on = datetime.now(ZoneInfo("Asia/Kolkata")).date() if args.published_today else None
+today, results = crawl(max_jobs=args.max_jobs, only=args.only, published_on=published_on)
 base_report = Path("reports") / f"SarkariResult_LatestJobs_{today.isoformat()}.docx"
 summary_path, job_files = make_report(today, results, base_report)
 

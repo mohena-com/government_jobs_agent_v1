@@ -134,13 +134,16 @@ Do not omit a post merely because the name is long.
 
 SLIDE 3 — eligibility
 Include the verified post-specific educational qualifications and computer,
-skill, language, or experience requirements. Keep long legal wording concise,
-but preserve material requirements and distinguish posts.
+skill, language, or experience requirements. This is an Instagram slide, not
+the notification: give ONLY the essential qualification in a SHORT phrase for
+each post, ideally 1–2 lines. Remove legal boilerplate, institution-recognition boilerplate, document-verification wording, and repeated phrases while retaining
+material degree/discipline/computer/experience requirements. Do not omit a verified post.
 
 SLIDE 4 — age_pay_fee
-Include verified age limit/relaxations, pay/salary/pay level, and category-wise
-application fee. If a subfield is genuinely unavailable, use the space for
-another available fact from this slide's topic; never invent a value.
+Include ONLY concise verified values: age range/maximum age and important
+relaxation note; pay level/basic pay/salary range; category-wise application fee.
+Do not repeat advertisement numbers, notification identifiers, source titles,
+or long explanatory paragraphs. Aim for short card-friendly phrases.
 
 SLIDE 5 — dates_selection
 Include application start/end and other verified dates, then the exact
@@ -230,8 +233,8 @@ The facts_used field is audit-only.
 Content requirements:
 - slide_1: recruitment, organisation, total vacancies, deadline
 - slide_2: every post + exact vacancy + total
-- slide_3: post-specific qualifications/skills/experience
-- slide_4: age/relaxation + pay/salary/level + category fee
+- slide_3: every verified post + essential qualification only; concise 1–2 line summaries
+- slide_4: concise age + pay + fee values only; no advertisement/source boilerplate
 - slide_5: application dates + exact selection process
 - slide_6: how to apply + important instructions; URLs are attached separately
 
