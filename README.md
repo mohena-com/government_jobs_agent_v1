@@ -63,3 +63,12 @@ If an official link cannot be found, it says `Not found`; it is never invented.
 
 Only after this source traversal is working reliably will we add structured
 field extraction and then official-notification crawling.
+
+
+Without Instagram:
+
+python3.1 main.py --max-jobs 3
+
+With Instagram slides:
+
+python3.1 main.py --max-jobs 3 --instagram
