@@ -22,6 +22,7 @@ p.add_argument("--qwen-output", default="social/qwen")
 p.add_argument("--job-index", type=int, default=None, help="1-based job number to send to Qwen (useful for testing)")
 p.add_argument("--quality-gate-only", action="store_true", help="Extract facts and run the quality gate without calling Qwen")
 p.add_argument("--allow-qwen-on-failed-gate", action="store_true", help="Do not block Qwen when the quality gate fails (not recommended)")
+p.add_argument("--verify-official", action="store_true", help="Download and verify official notification PDFs before Qwen")
 
 args = p.parse_args()
 
@@ -44,6 +45,7 @@ if args.docx:
         job_index=args.job_index,
         quality_gate_only=args.quality_gate_only,
         fail_on_quality_gate=not args.allow_qwen_on_failed_gate,
+        verify_official=args.verify_official,
     )
     print(f"DOCX: {args.docx}")
     print(f"Ollama: {args.ollama_host}")

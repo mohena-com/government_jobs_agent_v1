@@ -7,6 +7,7 @@ from src.docx.reader import read_docx, to_locked_facts
 from src.docx.quality_gate import quality_gate
 from src.llm.ollama_client import OllamaClient
 from src.llm.validator import validate_slide_plan
+from src.verify_official import verify_urls, apply_to_job
 
 
 def generate_from_docx(
@@ -19,6 +20,7 @@ def generate_from_docx(
     job_index: int | None = None,
     quality_gate_only: bool = False,
     fail_on_quality_gate: bool = True,
+    verify_official: bool = False,
 ):
     parsed = read_docx(docx_path)
     output_dir = Path(output_dir)
@@ -36,7 +38,21 @@ def generate_from_docx(
 
     for idx, job in selected:
         facts = to_locked_facts(job)
+        verification = None
+        if verify_official:
+            urls = [x.get("url") for x in job.get("links", []) if isinstance(x, dict) and x.get("url")]
+            verification = verify_urls(urls)
+            verified_facts, _ = apply_to_job(job, verification)
+            # Preserve DOCX facts and overlay only facts supported by the official PDFs.
+            for k, v in verified_facts.items():
+                if v not in ("", None, []): facts[k] = v
+            facts["official_verification"] = verification
         gate = quality_gate(job, facts)
+        if verify_official:
+            gate["official_verification_status"] = verification.get("status") if verification else "NOT_RUN"
+            gate["verification_required"] = False if verification and verification.get("status") == "PASS" else gate.get("verification_required", True)
+            if verification and verification.get("status") == "PASS":
+                gate["status"] = "PASS" if not gate.get("errors") else "FAIL"
         any_failed = any_failed or gate["status"] == "FAIL"
 
         record = {
@@ -44,6 +60,7 @@ def generate_from_docx(
             "source_job": job,
             "locked_facts": facts,
             "quality_gate": gate,
+            "official_verification": verification,
         }
 
         if quality_gate_only or gate["status"] == "FAIL":
