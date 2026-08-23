@@ -5,13 +5,8 @@ from typing import Any
 
 
 def _flatten_strings(value: Any) -> list[str]:
-    out: list[str] = []
-    if isinstance(value, str):
-        out.append(value)
-    elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        # Numeric facts are frequently stored as JSON numbers (e.g. 727), not
-        # strings. Include them in the authoritative source text used by the
-        # numeric guardrail.
+    out = []
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
         out.append(str(value))
     elif isinstance(value, dict):
         for v in value.values():
@@ -37,8 +32,7 @@ def validate_slide_plan(plan: dict, facts: dict) -> list[str]:
     warnings = []
 
     source_numbers = _tokens(source)
-    generated_numbers = _tokens(generated)
-    for token in sorted(generated_numbers):
+    for token in sorted(_tokens(generated)):
         # Ignore slide numbering and common formatting numbers.
         if token in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}:
             continue

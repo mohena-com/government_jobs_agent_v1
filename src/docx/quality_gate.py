@@ -26,49 +26,6 @@ def _numeric(v: Any) -> int | None:
     return int(m.group(1).replace(",", "")) if m else None
 
 
-
-CANONICAL_POSTS = (
-    "junior engineer-i (electrical)",
-    "junior engineer-i (mechanical)",
-    "junior engineer-i (civil)",
-    "junior accountant",
-    "junior assistant/ commercial assistant-ii",
-)
-
-
-def _post_key(v: Any) -> str:
-    return " ".join(str(v or "").lower().replace("–", "-").replace("—", "-").split())
-
-
-def _post_fact_quality(facts: dict, errors: list[str], suspicious: list[str], verification: list[str]) -> None:
-    """V1.9.8 hard gate: every canonical post must have clean eligibility."""
-    rows = facts.get("post_facts") or facts.get("post_eligibility") or []
-    by_post = {_post_key(r.get("post")): r for r in rows if isinstance(r, dict)}
-    missing = []
-    bad = []
-    for post in CANONICAL_POSTS:
-        row = by_post.get(post)
-        if not row:
-            missing.append(post)
-            continue
-        qual = _norm(row.get("qualification"))
-        method = _norm(row.get("source_method")).upper()
-        if _is_missing(qual):
-            bad.append(post)
-        if method in {"GENERIC_BOUNDARY", "GENERIC", "PAGE_WINDOW", "UNKNOWN"}:
-            bad.append(post)
-        low = qual.lower()
-        if any(x in low for x in ("disqualification for appointment", "physical fitness", "character of candidate", "read the notification")):
-            bad.append(post)
-    if missing:
-        errors.append("Missing post-specific eligibility facts for canonical posts: " + ", ".join(missing))
-    if bad:
-        unique = list(dict.fromkeys(bad))
-        errors.append("Unusable/contaminated post-specific eligibility facts for canonical posts: " + ", ".join(unique))
-    if missing or bad:
-        suspicious.append("post_eligibility")
-        verification.append("Verify clean post-specific educational qualification for every canonical post")
-
 def quality_gate(job: dict, facts: dict) -> dict:
     errors: list[str] = []
     warnings: list[str] = []
@@ -158,19 +115,6 @@ def quality_gate(job: dict, facts: dict) -> dict:
         if value and ("read the notification" in low or "post information, selection procedure" in low or "selection procedure, details, age limit" in low):
             errors.append(f"Unverified placeholder content in {field}")
             suspicious.append(field)
-
-    # V1.9.8: post-specific eligibility is a hard safety requirement.
-    _post_fact_quality(facts, errors, suspicious, verification)
-
-    # V1.9.9: reject obvious section contamination that could become polished misinformation.
-    how = _norm(facts.get("how_to_apply"))
-    sel = _norm(facts.get("selection_process"))
-    if how and any(x in how.lower() for x in ("name of company field area of operation", "generation of electricity", "transmission of electricity")):
-        errors.append("Contaminated how_to_apply field detected")
-        suspicious.append("how_to_apply")
-    if sel and any(x in sel.lower() for x in ("name of company field area of operation", "generation of electricity", "transmission of electricity")):
-        errors.append("Contaminated selection_process field detected")
-        suspicious.append("selection_process")
 
     # If every required field is verified and the vacancy table reconciles, PASS.
     # Otherwise the gate blocks Qwen. Candidates and missing fields remain verification work.

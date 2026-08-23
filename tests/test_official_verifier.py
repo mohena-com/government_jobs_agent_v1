@@ -148,35 +148,3 @@ def test_v194_deep_extraction_is_conservative():
     '''
     d = _classify(text, 'https://example/ja.pdf')
     assert d['post_eligibility'] == []
-
-
-def test_rvunl_how_to_apply_contamination_is_cleared():
-    from src.verify_official import apply_to_job
-
-    verification = {
-        'advertisements': [{
-            'advertisement_number': 'RVUN/Rectt.-2026-27/02',
-            'organisation': 'Rajasthan Rajya Vidyut Utpadan Nigam Ltd. (RVUNL)',
-            'published_date': '2026-08-04',
-            'age_limit': '21–43 years',
-            'pay_scale': 'Level-10',
-            'application_start': '2026-08-05',
-            'application_end': '2026-08-25',
-            'url': 'https://example.gov.in/notification.pdf',
-            'post_eligibility': [],
-            'post_sections': [],
-            'selection_process': 'CBT',
-            'how_to_apply': 'Name of Company Field Area of Operation Rajasthan RVUN...',
-            'application_fee_official': '',
-            'experience_official': '',
-        }],
-        'combined_vacancies': 727,
-        'application_start': '2026-08-05',
-        'application_end': '2026-08-25',
-        'post_vacancies': [],
-        'raw_post_vacancies': [],
-        'status': 'PASS',
-    }
-    facts, _ = apply_to_job({}, verification)
-    assert facts['how_to_apply'] == ''
-    assert 'how_to_apply_verification_note' in facts

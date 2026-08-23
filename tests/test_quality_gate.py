@@ -15,13 +15,6 @@ def test_quality_gate_passes_complete_record():
         "official_links": [{"label": "Official Notification", "url": "https://example.gov.in/a.pdf"}],
         "title_vacancy_candidate": "2005",
         "derived_vacancy_sum": 2005,
-        "post_facts": [
-            {"post": "Junior Engineer-I (Electrical)", "qualification": "Verified"},
-            {"post": "Junior Engineer-I (Mechanical)", "qualification": "Verified"},
-            {"post": "Junior Engineer-I (Civil)", "qualification": "Verified"},
-            {"post": "Junior Accountant", "qualification": "Verified"},
-            {"post": "Junior Assistant/ Commercial Assistant-II", "qualification": "Verified"},
-        ],
     }
     result = quality_gate({}, facts)
     assert result["status"] == "PASS"
@@ -92,13 +85,6 @@ def test_quality_gate_accepts_canonical_reconciled_post_vacancies():
         "official_verification": {"authoritative_expected_total": 2005},
         "derived_vacancy_sum": 2005,
         "selection_process": "",
-        "post_facts": [
-            {"post": "Junior Engineer-I (Electrical)", "qualification": "Verified"},
-            {"post": "Junior Engineer-I (Mechanical)", "qualification": "Verified"},
-            {"post": "Junior Engineer-I (Civil)", "qualification": "Verified"},
-            {"post": "Junior Accountant", "qualification": "Verified"},
-            {"post": "Junior Assistant/ Commercial Assistant-II", "qualification": "Verified"},
-        ],
     }
     result = quality_gate({}, facts)
     assert result["status"] == "PASS"

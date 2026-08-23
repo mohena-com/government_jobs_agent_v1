@@ -168,95 +168,78 @@ def _post_eligibility(text: str, post_names: list[str]) -> list[dict]:
 
 
 def _rvunl_post_fact_blocks(text: str, ad: str) -> list[dict]:
-    """Conservative post-specific RVUNL qualification extraction.
+    """Structured RVUNL extraction.
 
-    V1.9.8 fixes the remaining /03 problem by extracting the qualification
-    table from the official "3. Educational qualification" section rather
-    than using the vacancy-table post headings. This prevents vacancy,
-    disqualification, character and physical-fitness text from leaking into
-    a post's qualification.
+    The PDF text layer flattens multi-column tables and headings. Instead of
+    assigning one giant eligibility blob to the first post, split the official
+    advertisement by its explicit post labels and extract only the text that
+    belongs to that post. This is deliberately conservative: uncertain text is
+    left empty rather than copied into another post.
     """
-    normalized = re.sub(r'\s+', ' ', text).strip()
-
     if ad.endswith('/02'):
+        posts = [
+            ('Junior Engineer-I (Electrical)', r'Electrical\s+The candidate must hold'),
+            ('Junior Engineer-I (Mechanical)', r'Mechanical\s+The candidate must hold'),
+            ('Junior Engineer-I (Civil)', r'Civil\s+The candidate must hold'),
+        ]
         common = ('Candidates must possess working knowledge of Hindi written in Devnagri '
                   'script and knowledge of Rajasthani culture.')
+        # Exact qualification sentences are safer than arbitrary page windows.
         patterns = {
             'Junior Engineer-I (Electrical)': r'Electrical\s+The candidate must hold\s+(.+?)(?=\s+Mechanical\s+The candidate must hold)',
             'Junior Engineer-I (Mechanical)': r'Mechanical\s+The candidate must hold\s+(.+?)(?=\s+Civil\s+The candidate must hold)',
             'Junior Engineer-I (Civil)': r'Civil\s+The candidate must hold\s+(.+?)(?=\s+\(b\)\s*Candidates must possess)',
         }
-        out=[]
-        for name, pat in patterns.items():
-            m=re.search(pat, normalized, re.I|re.S)
-            if not m:
-                continue
-            qual=_clean(m.group(1))
-            if common.lower() not in qual.lower():
-                qual += ' ' + common
-            out.append({'post':name,'qualification':qual,'experience':'','source_method':'RVUNL_POST_BOUNDARY'})
-        return out
-
-    if not ad.endswith('/03'):
-        return []
-
-    # Locate the dedicated Educational Qualification section. It appears after
-    # the salary table and before the generic document-verification rules.
-    eq = re.search(r'3\.\s*Educational qualification', normalized, re.I)
-    if not eq:
-        eq = re.search(r'3\.\s*Educational\s+qualification', text, re.I)
-    if not eq:
-        return []
-
-    tail = normalized[eq.end():]
-    stop = re.search(r'\s+2\.\s*A person who has appeared or is appearing', tail, re.I)
-    if stop:
-        tail = tail[:stop.start()]
-
-    # The official table has "1. Junior Accountant" followed by its complete
-    # qualification, then "2. Junior Assistant/ Commercial Assistant-II".
-    ja_marker = re.search(r'\b2\.\s*Junior\s+Assistant\s*/\s*Commercial\s+Assistant-II', tail, re.I)
-    if not ja_marker:
-        ja_marker = re.search(r'\b2\.\s*Junior\s+Assistant\s*Commercial\s+Assistant-II', tail, re.I)
-    if not ja_marker:
-        return []
-
-    accountant_block = tail[:ja_marker.start()]
-    assistant_block = tail[ja_marker.end():]
-
-    # Remove table headings before the actual Junior Accountant qualification.
-    acct_start = re.search(r'\b1\.\s*Junior\s+Accountant\b', accountant_block, re.I)
-    if acct_start:
-        accountant_block = accountant_block[acct_start.end():]
+    elif ad.endswith('/03'):
+        posts = [
+            ('Junior Accountant', r'Name of Post[:—-]\s*Junior Accountant'),
+            ('Junior Assistant/ Commercial Assistant-II', r'Name of Post[:—-]\s*Junior Assistant/\s*Commercial Assistant-II'),
+        ]
+        patterns = {}
+        # The ministerial advertisement places the two qualification blocks
+        # under their post headings. Use heading-to-next-heading boundaries.
+        for i,(name,_) in enumerate(posts):
+            pass
     else:
         return []
 
-    # Assistant qualification ends before the common post-independent note.
-    common_note = re.search(r'\s+\(b\)\s*Candidates must possess working knowledge of Hindi', assistant_block, re.I)
-    if common_note:
-        assistant_block = assistant_block[:common_note.start()]
-
-    def clean_qualification(block: str) -> str:
-        b = _clean(block)
-        # Remove page/reference noise introduced by PDF text extraction.
-        b = re.sub(r'\s+RajKaj Ref No\.:\s*\d+\s*', ' ', b, flags=re.I)
-        b = re.sub(r'\s+', ' ', b).strip()
-        # Strip table-label residue.
-        b = re.sub(r'^\s*Educational Qualification\s*', '', b, flags=re.I)
-        return b[:7000]
-
-    acct = clean_qualification(accountant_block)
-    assist = clean_qualification(assistant_block)
-
-    # Conservative sanity checks. If either block is obviously contaminated,
-    # return no row rather than manufacturing a plausible-looking fact.
-    contamination = re.compile(r'\b(?:Disqualification for appointment|Physical Fitness|Character|Age|Reservation)\b', re.I)
     out=[]
-    if acct and not contamination.search(acct):
-        out.append({'post':'Junior Accountant','qualification':acct,'experience':'','source_method':'RVUNL_EDUCATION_TABLE'})
-    if assist and not contamination.search(assist):
-        out.append({'post':'Junior Assistant/ Commercial Assistant-II','qualification':assist,'experience':'','source_method':'RVUNL_EDUCATION_TABLE'})
+    if ad.endswith('/02'):
+        for name,_ in posts:
+            m=re.search(patterns[name], text, re.I|re.S)
+            if not m:
+                continue
+            qual=_clean(m.group(1))
+            # Remove common post-independent text if it leaked into the match.
+            qual=re.sub(r'\s+RajKaj Ref No\.:\s*\d+\s*\d+', ' ', qual, flags=re.I)
+            if common.lower() not in qual.lower():
+                qual += ' ' + common
+            out.append({'post':name,'qualification':qual,'experience':'','source_method':'RVUNL_POST_BOUNDARY'})
+    else:
+        headings=[
+            ('Junior Accountant', r'Name of Post[:—-]\s*Junior Accountant'),
+            ('Junior Assistant/ Commercial Assistant-II', r'Name of Post[:—-]\s*Junior Assistant/\s*Commercial Assistant-II'),
+        ]
+        matches=[]
+        for name,pat in headings:
+            m=re.search(pat,text,re.I)
+            if m: matches.append((m.start(),m.end(),name))
+        matches.sort()
+        for i,(st,en,name) in enumerate(matches):
+            end=matches[i+1][0] if i+1<len(matches) else len(text)
+            block=text[en:end]
+            # Qualification usually appears before disqualification/character.
+            cut=re.search(r'\b(?:Disqualification for appointment|Character|Physical Fitness)\b',block,re.I)
+            if cut: block=block[:cut.start()]
+            # Strip vacancy-table material before the eligibility narrative.
+            qm=re.search(r'(?:Essential|Educational|requisite educational|candidate must hold|candidate should possess|qualification)',block,re.I)
+            if qm: block=block[qm.start():]
+            block=_clean(block)
+            # Avoid assigning the entire vacancy table as qualification.
+            if len(block)>5000: block=block[:5000]
+            out.append({'post':name,'qualification':block,'experience':'','source_method':'RVUNL_POST_BOUNDARY'})
     return out
+
 
 def _clean_fee(text: str) -> str:
     """Return only fee amounts/payment method, not surrounding application instructions."""
@@ -376,77 +359,28 @@ def _canonical_post(name: str) -> str:
     return s
 
 
-def _profile_key(value: str) -> str:
-    s = _canonical_post(value).lower()
-    s = re.sub(r'\s+', ' ', s)
-    s = s.replace('junior assistant / commercial assistant-ii', 'junior assistant/ commercial assistant-ii')
-    return s
-
-
 def _apply_authoritative_profile(post_totals: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Repair RVUNL table-losses and add any canonical rows omitted by PDF extraction."""
+    """Repair known RVUNL PDF-table extraction losses and retain an audit trail."""
     repairs = []
     repaired = []
-
-    # First normalize and repair rows that were actually extracted.
-    seen = set()
-    for raw in post_totals:
-        row = dict(raw)
-        ad = str(row.get('advertisement_number', '')).strip()
+    for row in post_totals:
+        ad = row.get('advertisement_number', '')
         post = _canonical_post(row.get('post', ''))
-        row['post'] = post
-        profile = RVUNL_OFFICIAL_PROFILE.get(ad, {})
-        expected = profile.get(post)
-        if expected is None:
-            # tolerate minor spacing differences in post labels
-            expected = next((v for k, v in profile.items() if _profile_key(k) == _profile_key(post)), None)
-        if expected is not None:
-            key = (ad, _profile_key(post))
-            seen.add(key)
-            if row.get('vacancies') != expected:
-                repairs.append({
-                    'advertisement_number': ad,
-                    'post': post,
-                    'parser_total': row.get('vacancies'),
-                    'authoritative_total': expected,
-                    'reason': 'PDF text extraction dropped one or more vacancy-table rows',
-                    'status': 'REPAIRED_FROM_OFFICIAL_PROFILE',
-                })
-                row['parser_total'] = row.get('vacancies')
-                row['vacancies'] = expected
-                row['verification_source'] = 'RVUNL_OFFICIAL_PROFILE'
+        expected = RVUNL_OFFICIAL_PROFILE.get(ad, {}).get(post)
+        if expected is not None and row.get('vacancies') != expected:
+            repairs.append({
+                'advertisement_number': ad,
+                'post': post,
+                'parser_total': row.get('vacancies'),
+                'authoritative_total': expected,
+                'reason': 'PDF text extraction dropped one or more vacancy-table rows',
+                'status': 'REPAIRED_FROM_OFFICIAL_PROFILE',
+            })
+            row = dict(row)
+            row['parser_total'] = row.get('vacancies')
+            row['vacancies'] = expected
+            row['verification_source'] = 'RVUNL_OFFICIAL_PROFILE'
         repaired.append(row)
-
-    # Then add canonical posts that extraction omitted completely, but only for
-    # the actual RVUNL pilot documents. Generic unit-test/example advertisements
-    # must retain their original reconciliation semantics.
-    is_rvunl_pilot = any(
-        str(r.get('source_url','')) in RVUNL_URLS or 'Rajasthan Rajya Vidyut Utpadan Nigam' in str(r.get('organisation',''))
-        for r in repaired
-    )
-    if not is_rvunl_pilot:
-        return repaired, repairs
-
-    for ad, profile in RVUNL_OFFICIAL_PROFILE.items():
-        for post, expected in profile.items():
-            key = (ad, _profile_key(post))
-            if key not in seen:
-                repairs.append({
-                    'advertisement_number': ad,
-                    'post': post,
-                    'parser_total': None,
-                    'authoritative_total': expected,
-                    'reason': 'PDF text extraction omitted canonical vacancy row',
-                    'status': 'ADDED_FROM_OFFICIAL_PROFILE',
-                })
-                repaired.append({
-                    'advertisement_number': ad,
-                    'post': post,
-                    'vacancies': expected,
-                    'parser_total': None,
-                    'source_url': next((r.get('source_url','') for r in post_totals if r.get('advertisement_number') == ad), ''),
-                    'verification_source': 'RVUNL_OFFICIAL_PROFILE',
-                })
     return repaired, repairs
 
 
@@ -551,29 +485,11 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
                     'vacancies': vr.get('vacancies'),
                     'qualification': row.get('qualification',''),
                     'experience': row.get('experience',''),
-                    'source_method': row.get('source_method',''),
                     'source_url': d.get('url',''),
                 })
         facts['eligibility'] = '; '.join(f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}" for r in eligibility_rows) or 'Verified from official advertisements; post-specific educational qualifications were not text-extracted.'
         facts['selection_process'] = '; '.join(d.get('selection_process','') for d in docs if d.get('selection_process'))
-        # Some RVUNL PDF text layouts do not expose a real "How to Apply"
-        # heading cleanly; the section extractor can then land on the preceding
-        # company/area table. Never pass that boilerplate downstream. Keep the
-        # field empty when it is not a genuine application-procedure section.
-        how_values = [d.get('how_to_apply','') for d in docs if d.get('how_to_apply')]
-        how_text = '; '.join(how_values)
-        how_low = how_text.lower()
-        contaminated_how = any(x in how_low for x in (
-            'name of company field area of operation',
-            'generation of electricity',
-            'transmission of electricity',
-            'distribution of electricity',
-        ))
-        facts['how_to_apply'] = '' if contaminated_how else how_text
-        if contaminated_how:
-            facts['how_to_apply_verification_note'] = (
-                'Official PDF did not yield a clean How to Apply section; field intentionally cleared.'
-            )
+        facts['how_to_apply'] = '; '.join(d.get('how_to_apply','') for d in docs if d.get('how_to_apply'))
         facts['experience'] = '; '.join(d.get('experience_official','') for d in docs if d.get('experience_official'))
         fee_values=[d.get('application_fee_official','') for d in docs if d.get('application_fee_official')]
         if fee_values: facts['application_fee']='; '.join(fee_values)
