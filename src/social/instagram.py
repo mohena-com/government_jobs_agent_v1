@@ -6,19 +6,42 @@ import textwrap
 from PIL import Image, ImageDraw, ImageFont
 
 
+# Instagram portrait: 4:5
 W, H = 1080, 1350
 
-BG = (248, 250, 252)
-DARK = (20, 30, 45)
-MUTED = (85, 96, 110)
-BLUE = (25, 87, 166)
-LIGHT_BLUE = (225, 238, 250)
-GREEN = (22, 130, 90)
-LIGHT_GREEN = (224, 245, 237)
-RED = (190, 55, 55)
-LIGHT_RED = (252, 231, 231)
+NAVY = (13, 48, 96)
+BLUE = (24, 78, 145)
+MID_BLUE = (55, 103, 165)
+PALE_BLUE = (235, 243, 252)
+YELLOW = (248, 188, 28)
+PALE_YELLOW = (255, 248, 220)
+GREEN = (23, 125, 88)
+PALE_GREEN = (231, 246, 239)
+RED = (190, 50, 50)
+PALE_RED = (253, 235, 235)
+DARK = (22, 30, 43)
+MUTED = (92, 105, 122)
 WHITE = (255, 255, 255)
-BORDER = (210, 218, 228)
+BORDER = (205, 216, 230)
+LIGHT = (247, 249, 252)
+
+
+SOCIAL_GARBAGE = {
+    "telegram", "join us", "whatsapp", "instagram",
+    "follow", "x", "image", "click here",
+}
+
+GENERIC_GARBAGE = {
+    "not found",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "unknown",
+    "organisation not identified",
+    "no structured vacancy table detected.",
+    "no external application/notification link detected.",
+}
 
 
 def _font(size, bold=False):
@@ -30,71 +53,98 @@ def _font(size, bold=False):
         "/Library/Fonts/Arial Bold.ttf"
         if bold else "/Library/Fonts/Arial.ttf",
     ]
-
-    for path in candidates:
-        p = Path(path)
-        if p.exists():
-            return ImageFont.truetype(str(p), size)
-
+    for p in candidates:
+        path = Path(p)
+        if path.exists():
+            return ImageFont.truetype(str(path), size)
     return ImageFont.load_default()
 
 
-FONT_XL = _font(64, True)
-FONT_L = _font(46, True)
-FONT_M = _font(32, True)
-FONT_BODY = _font(28, False)
-FONT_BODY_BOLD = _font(28, True)
-FONT_SMALL = _font(22, False)
-FONT_SMALL_BOLD = _font(22, True)
+F_XL = _font(64, True)
+F_TITLE = _font(48, True)
+F_H1 = _font(36, True)
+F_H2 = _font(28, True)
+F_BODY = _font(25, False)
+F_BODY_B = _font(25, True)
+F_SMALL = _font(19, False)
+F_SMALL_B = _font(19, True)
+F_TINY = _font(16, False)
 
 
-def clean_text(value):
+def clean_value(value):
+    """
+    Final presentation filter. Never turns missing data into a
+    visible 'Not found' field.
+    """
     if value is None:
         return ""
 
-    blocked = {
-        "telegram", "join us", "whatsapp", "instagram",
-        "follow", "x", "image",
-    }
+    text = str(value).replace("\r", "\n")
+    out = []
 
-    lines = []
-
-    for raw in str(value).splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         line = re.sub(r"^[·•*\-]+\s*", "", line)
+        line = re.sub(r"\s+", " ", line).strip()
+
         if not line:
             continue
 
         low = line.lower()
 
-        if low in blocked:
+        if low in SOCIAL_GARBAGE or low in GENERIC_GARBAGE:
             continue
 
-        if any(x in low for x in ("telegram", "whatsapp", "instagram")) and len(line) < 100:
+        # Social/navigation contamination.
+        if any(x in low for x in ("telegram", "whatsapp", "instagram")) and len(line) < 120:
+            continue
+        if low.startswith("join us") and len(line) < 120:
+            continue
+        if low.startswith("follow") and len(line) < 120:
             continue
 
-        if (low.startswith("join us") or low.startswith("follow")) and len(line) < 100:
+        # Source boilerplate that is not useful on an Instagram slide.
+        boilerplate = (
+            "sarkari result official",
+            "always visit sarkariresult",
+            "candidate read the notification before",
+            "kindly ready scan document",
+            "kindly check and collect",
+            "before submit the application form",
+            "take a print out of final submitted form",
+        )
+        if any(x in low for x in boilerplate):
             continue
 
-        lines.append(line)
+        out.append(line)
 
-    return "\n".join(lines).strip()
-
-
-def title_font_for(text):
-    n = len(text or "")
-    if n <= 45:
-        return FONT_XL
-    if n <= 75:
-        return FONT_L
-    return FONT_M
+    return "\n".join(out).strip()
 
 
-def draw_wrapped(draw, text, xy, font, fill=DARK, max_width=900,
-                 line_gap=12, max_lines=None):
-    text = clean_text(text)
+def first_value(*values):
+    for value in values:
+        cleaned = clean_value(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def is_url(value):
+    value = clean_value(value)
+    return bool(re.match(r"^https?://", value, re.I))
+
+
+def safe_filename(text):
+    text = clean_value(text) or "Recruitment"
+    text = re.sub(r"[^\w\s.-]", "", text)
+    text = re.sub(r"\s+", "_", text).strip("_")
+    return text[:75] or "Recruitment"
+
+
+def wrap_lines(draw, text, font, max_width, max_lines=None):
+    text = clean_value(text)
     if not text:
-        return xy[1]
+        return []
 
     words = text.split()
     lines = []
@@ -102,7 +152,6 @@ def draw_wrapped(draw, text, xy, font, fill=DARK, max_width=900,
 
     for word in words:
         trial = f"{current} {word}".strip()
-
         if draw.textbbox((0, 0), trial, font=font)[2] <= max_width:
             current = trial
         else:
@@ -113,423 +162,556 @@ def draw_wrapped(draw, text, xy, font, fill=DARK, max_width=900,
     if current:
         lines.append(current)
 
-    if max_lines:
-        if len(lines) > max_lines:
-            lines = lines[:max_lines]
-            if lines:
-                lines[-1] = lines[-1].rstrip(". ") + "..."
+    if max_lines and len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1].rstrip(" .") + "…"
 
-    y = xy[1]
+    return lines
 
+
+def draw_text(draw, text, x, y, font, fill=DARK, width=900,
+              line_gap=8, max_lines=None):
+    lines = wrap_lines(draw, text, font, width, max_lines)
     for line in lines:
-        draw.text((xy[0], y), line, font=font, fill=fill)
-        bbox = draw.textbbox((xy[0], y), line, font=font)
-        y = bbox[3] + line_gap
-
+        draw.text((x, y), line, font=font, fill=fill)
+        y += font.size + line_gap
     return y
 
 
-def card(draw, x, y, w, h, fill=WHITE, outline=BORDER, radius=24):
+def rounded_card(draw, x, y, w, h, fill=WHITE, outline=BORDER, radius=24, width=2):
     draw.rounded_rectangle(
         (x, y, x + w, y + h),
         radius=radius,
         fill=fill,
         outline=outline,
-        width=2,
+        width=width,
     )
 
 
-def label_value(draw, x, y, label, value, width=900):
+def pill(draw, text, x, y, fill=YELLOW, text_fill=NAVY, pad_x=22, pad_y=11):
+    bbox = draw.textbbox((0, 0), text, font=F_SMALL_B)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    draw.rounded_rectangle(
+        (x, y, x + tw + 2 * pad_x, y + th + 2 * pad_y),
+        radius=18,
+        fill=fill,
+    )
     draw.text(
-        (x, y),
-        clean_text(label),
-        font=FONT_SMALL_BOLD,
-        fill=MUTED,
+        (x + pad_x, y + pad_y - 1),
+        text,
+        font=F_SMALL_B,
+        fill=text_fill,
     )
-
-    y += 32
-
-    y = draw_wrapped(
-        draw,
-        value or "Not found",
-        (x, y),
-        FONT_BODY_BOLD,
-        DARK,
-        max_width=width,
-        line_gap=8,
-        max_lines=3,
-    )
-
-    return y + 18
+    return x + tw + 2 * pad_x
 
 
-def header(draw, slide_no, total, organisation):
-    draw.text(
-        (60, 45),
-        "GOVERNMENT JOB ALERT",
-        font=FONT_SMALL_BOLD,
-        fill=BLUE,
-    )
+def topbar(draw, organisation, slide, total):
+    draw.rectangle((0, 0, W, 110), fill=NAVY)
+
+    org = clean_value(organisation)
+    if org:
+        draw_text(
+            draw, org, 55, 25, F_H2, WHITE,
+            width=790, line_gap=3, max_lines=1
+        )
 
     draw.text(
-        (60, 85),
-        clean_text(organisation) or "Government Recruitment",
-        font=FONT_SMALL,
-        fill=MUTED,
+        (W - 125, 32),
+        f"{slide}/{total}",
+        font=F_SMALL_B,
+        fill=WHITE,
     )
 
     draw.text(
-        (W - 150, 50),
-        f"{slide_no}/{total}",
-        font=FONT_SMALL_BOLD,
-        fill=MUTED,
+        (55, 79),
+        "GOVERNMENT RECRUITMENT • 2026",
+        font=F_TINY,
+        fill=(215, 228, 244),
     )
 
 
 def footer(draw):
+    draw.rectangle((0, H - 62, W, H), fill=NAVY)
     draw.text(
-        (60, H - 70),
-        "Source: SarkariResult • Verify details in official notification",
-        font=FONT_SMALL,
-        fill=MUTED,
+        (55, H - 43),
+        "Verify eligibility, dates and conditions in the official notification.",
+        font=F_TINY,
+        fill=WHITE,
     )
 
 
-def make_slide_1(job, out, slide_no, total):
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    organisation = job.get("organisation") or "Government Recruitment"
-    listing = job.get("listing", {})
-    title = job.get("post_title") or listing.get("title") or "Recruitment Notice"
-    deadline = job.get("application_end") or listing.get("last_date") or "Not found"
-
-    header(d, slide_no, total, organisation)
-
-    y = 190
-
-    d.rounded_rectangle(
-        (60, y, W - 60, y + 180),
-        radius=28,
-        fill=BLUE,
+def add_field_card(draw, x, y, w, h, label, value, fill=WHITE, accent=BLUE):
+    rounded_card(draw, x, y, w, h, fill=fill)
+    draw.text(
+        (x + 24, y + 18),
+        label.upper(),
+        font=F_SMALL_B,
+        fill=accent,
     )
-
-    draw_wrapped(
-        d,
-        "NEW GOVERNMENT JOB",
-        (95, y + 35),
-        FONT_M,
-        WHITE,
-        max_width=880,
-    )
-
-    y = 420
-
-    y = draw_wrapped(
-        d,
-        title,
-        (60, y),
-        title_font_for(title),
+    draw_text(
+        draw,
+        value,
+        x + 24,
+        y + 52,
+        F_BODY_B,
         DARK,
-        max_width=960,
-        line_gap=14,
+        width=w - 48,
+        line_gap=6,
         max_lines=4,
     )
 
-    y += 35
 
-    card(
-        d,
-        60,
-        y,
-        960,
-        190,
-        fill=LIGHT_RED,
-        outline=(238, 190, 190),
+def get_basic(job):
+    listing = job.get("listing", {}) or {}
+
+    title = first_value(
+        job.get("post_title"),
+        listing.get("title"),
     )
 
-    d.text(
-        (95, y + 30),
-        "APPLICATION DEADLINE",
-        font=FONT_SMALL_BOLD,
-        fill=RED,
+    organisation = first_value(
+        job.get("organisation"),
+        job.get("recruiting_organisation"),
     )
 
-    draw_wrapped(
-        d,
-        str(deadline),
-        (95, y + 78),
-        FONT_L,
-        RED,
-        max_width=850,
-        line_gap=8,
+    deadline = first_value(
+        job.get("application_end"),
+        listing.get("last_date"),
     )
 
-    total_vacancies = job.get("total_vacancies")
-    if total_vacancies:
-        d.text(
-            (95, y + 140),
-            f"Vacancies: {total_vacancies}",
-            font=FONT_BODY_BOLD,
-            fill=DARK,
-        )
-
-    footer(d)
-    img.save(out, quality=95)
-
-
-def make_slide_2(job, out, slide_no, total):
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    organisation = job.get("organisation") or "Government Recruitment"
-    header(d, slide_no, total, organisation)
-
-    d.text(
-        (60, 170),
-        "KEY INFORMATION",
-        font=FONT_L,
-        fill=DARK,
+    vacancies = first_value(
+        job.get("total_vacancies"),
     )
 
-    rows = [
-        ("Advertisement / Reference No.", job.get("advertisement_number")),
-        ("Published / Updated", job.get("post_update")),
-        ("Total Vacancies", job.get("total_vacancies")),
-        ("Application Start", job.get("application_start")),
-        ("Application End", job.get("application_end")),
-        ("Age Limit", job.get("age_limit")),
-    ]
-
-    y = 250
-
-    for label, value in rows:
-        card(d, 60, y, 960, 125)
-        label_value(d, 90, y + 20, label, value, width=870)
-        y += 145
-
-        if y > 1170:
-            break
-
-    footer(d)
-    img.save(out, quality=95)
-
-
-def make_slide_3(job, out, slide_no, total):
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    organisation = job.get("organisation") or "Government Recruitment"
-    header(d, slide_no, total, organisation)
-
-    d.text(
-        (60, 170),
-        "VACANCY DETAILS",
-        font=FONT_L,
-        fill=DARK,
+    start = first_value(
+        job.get("application_start"),
     )
 
-    rows = job.get("vacancy_rows", [])
-
-    if not rows:
-        draw_wrapped(
-            d,
-            "Detailed vacancy table was not available in the extracted data.",
-            (60, 250),
-            FONT_BODY,
-            MUTED,
-            max_width=900,
-        )
-    else:
-        y = 250
-
-        # Header
-        card(d, 60, y, 960, 70, fill=LIGHT_BLUE, outline=LIGHT_BLUE, radius=12)
-        d.text((90, y + 20), "POST", font=FONT_SMALL_BOLD, fill=DARK)
-        d.text((820, y + 20), "VACANCIES", font=FONT_SMALL_BOLD, fill=DARK)
-        y += 85
-
-        for row in rows:
-            post = row.get("post_name", "")
-            vacancies = row.get("vacancies", "")
-
-            card(d, 60, y, 960, 78, fill=WHITE, radius=12)
-
-            draw_wrapped(
-                d,
-                post,
-                (90, y + 15),
-                FONT_SMALL,
-                DARK,
-                max_width=690,
-                line_gap=5,
-                max_lines=2,
-            )
-
-            d.text(
-                (850, y + 22),
-                clean_text(vacancies),
-                font=FONT_BODY_BOLD,
-                fill=BLUE,
-            )
-
-            y += 90
-
-            if y > 1170:
-                break
-
-    footer(d)
-    img.save(out, quality=95)
-
-
-def make_slide_4(job, out, slide_no, total):
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    organisation = job.get("organisation") or "Government Recruitment"
-    header(d, slide_no, total, organisation)
-
-    d.text(
-        (60, 160),
-        "ELIGIBILITY & FEES",
-        font=FONT_L,
-        fill=DARK,
+    published = first_value(
+        job.get("post_update"),
+        job.get("published_date"),
     )
 
-    # Fee
-    card(d, 60, 235, 960, 250, fill=LIGHT_GREEN, outline=(190, 225, 210))
-
-    d.text(
-        (90, 265),
-        "APPLICATION FEE",
-        font=FONT_M,
-        fill=GREEN,
+    advt = first_value(
+        job.get("advertisement_number"),
+        job.get("advertisement_no"),
     )
 
-    fee = clean_text(job.get("application_fee")) or "Not found"
-
-    draw_wrapped(
-        d,
-        fee,
-        (90, 325),
-        FONT_BODY,
-        DARK,
-        max_width=880,
-        line_gap=8,
-        max_lines=5,
+    age = first_value(
+        job.get("age_limit"),
     )
 
-    # Eligibility
-    card(d, 60, 525, 960, 570)
-
-    d.text(
-        (90, 555),
-        "ELIGIBILITY",
-        font=FONT_M,
-        fill=BLUE,
+    pay = first_value(
+        job.get("pay_scale"),
+        job.get("salary"),
     )
 
-    eligibility = clean_text(job.get("eligibility")) or "Not found"
-
-    draw_wrapped(
-        d,
-        eligibility,
-        (90, 615),
-        FONT_BODY,
-        DARK,
-        max_width=880,
-        line_gap=10,
-        max_lines=16,
+    fee = first_value(
+        job.get("application_fee"),
     )
 
-    footer(d)
-    img.save(out, quality=95)
-
-
-def make_slide_5(job, out, slide_no, total):
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    organisation = job.get("organisation") or "Government Recruitment"
-    header(d, slide_no, total, organisation)
-
-    d.text(
-        (60, 165),
-        "IMPORTANT LINKS",
-        font=FONT_L,
-        fill=DARK,
+    eligibility = first_value(
+        job.get("eligibility"),
     )
 
+    selection = first_value(
+        job.get("selection_process"),
+    )
+
+    dates = first_value(
+        job.get("important_dates_raw"),
+    )
+
+    how_to_apply = first_value(
+        job.get("how_to_apply"),
+    )
+
+    return {
+        "title": title,
+        "organisation": organisation,
+        "deadline": deadline,
+        "vacancies": vacancies,
+        "start": start,
+        "published": published,
+        "advt": advt,
+        "age": age,
+        "pay": pay,
+        "fee": fee,
+        "eligibility": eligibility,
+        "selection": selection,
+        "dates": dates,
+        "how_to_apply": how_to_apply,
+    }
+
+
+def vacancy_rows(job):
+    rows = []
+    for row in job.get("vacancy_rows", []) or []:
+        post = clean_value(row.get("post_name"))
+        number = clean_value(row.get("vacancies"))
+        if post and number:
+            rows.append((post, number))
+    return rows
+
+
+def useful_links(job):
     links = []
 
-    for link in job.get("application_links", []):
-        url = link.get("url")
-        if url:
+    for link in job.get("application_links", []) or []:
+        url = clean_value(link.get("url"))
+        if is_url(url):
             links.append(("APPLY ONLINE", url))
 
-    for link in job.get("notification_links", []):
-        url = link.get("url")
-        if url:
+    for link in job.get("notification_links", []) or []:
+        url = clean_value(link.get("url"))
+        if is_url(url):
             links.append(("OFFICIAL NOTIFICATION", url))
 
-    if not links:
-        links.append(("APPLICATION / NOTIFICATION", "Not found"))
+    # Do not expose generic official_candidates as a separate
+    # card unless it is genuinely a usable URL.
+    seen = set()
+    result = []
+    for label, url in links:
+        if url not in seen:
+            seen.add(url)
+            result.append((label, url))
 
-    y = 250
+    source = clean_value(job.get("detail_url"))
+    if is_url(source) and source not in seen:
+        result.append(("SOURCE PAGE", source))
 
-    for label, url in links[:3]:
-        card(d, 60, y, 960, 230)
+    return result
+
+
+def make_cover(job, path, slide, total):
+    d = ImageDraw.Draw(Image.new("RGB", (W, H), LIGHT))
+    img = Image.new("RGB", (W, H), LIGHT)
+    d = ImageDraw.Draw(img)
+
+    b = get_basic(job)
+    topbar(d, b["organisation"], slide, total)
+
+    y = 155
+
+    if b["deadline"]:
+        pill(d, f"LAST DATE: {b['deadline']}", 55, y, PALE_RED, RED)
+        y += 82
+
+    y = draw_text(
+        d,
+        b["title"] or "Government Recruitment",
+        55, y, F_XL if len(b["title"]) < 60 else F_TITLE,
+        NAVY, width=970, line_gap=10, max_lines=4
+    )
+
+    y += 28
+
+    if b["organisation"]:
+        y = draw_text(
+            d,
+            b["organisation"],
+            58, y, F_H2, MUTED, width=930,
+            line_gap=5, max_lines=2
+        )
+        y += 20
+
+    # Only show facts that actually exist.
+    facts = []
+    if b["vacancies"]:
+        facts.append(("TOTAL VACANCIES", b["vacancies"]))
+    if b["start"]:
+        facts.append(("APPLICATION START", b["start"]))
+    if b["advt"]:
+        facts.append(("ADVERTISEMENT NO.", b["advt"]))
+
+    if facts:
+        cols = min(3, len(facts))
+        gap = 18
+        cw = (970 - gap * (cols - 1)) / cols
+
+        for i, (label, value) in enumerate(facts):
+            x = 55 + i * (cw + gap)
+            add_field_card(
+                d, x, y, cw, 145,
+                label, value,
+                fill=WHITE,
+                accent=BLUE,
+            )
+
+        y += 175
+
+    # Optional short description only if real extracted data exists.
+    desc = first_value(job.get("short_information"))
+    if desc:
+        rounded_card(d, 55, y, 970, 250, fill=PALE_BLUE, outline=(190, 211, 234))
+        draw_text(
+            d, desc, 85, y + 30, F_BODY,
+            DARK, width=910, line_gap=9, max_lines=8
+        )
+
+    footer(d)
+    img.save(path, quality=95)
+
+
+def make_info_slide(job, path, slide, total):
+    img = Image.new("RGB", (W, H), LIGHT)
+    d = ImageDraw.Draw(img)
+
+    b = get_basic(job)
+    topbar(d, b["organisation"], slide, total)
+
+    d.text((55, 145), "KEY INFORMATION", font=F_TITLE, fill=NAVY)
+
+    fields = []
+    for label, value in [
+        ("Published / Updated", b["published"]),
+        ("Application Start", b["start"]),
+        ("Application End", b["deadline"]),
+        ("Age Limit", b["age"]),
+        ("Pay / Salary", b["pay"]),
+        ("Application Fee", b["fee"]),
+    ]:
+        if value:
+            fields.append((label, value))
+
+    y = 220
+    for i in range(0, len(fields), 2):
+        pair = fields[i:i + 2]
+        cw = 465
+
+        for j, (label, value) in enumerate(pair):
+            add_field_card(
+                d,
+                55 + j * 495,
+                y,
+                cw,
+                180,
+                label,
+                value,
+                fill=WHITE,
+                accent=BLUE,
+            )
+
+        y += 205
+
+    footer(d)
+    img.save(path, quality=95)
+
+
+def make_vacancy_slide(job, path, slide, total):
+    img = Image.new("RGB", (W, H), LIGHT)
+    d = ImageDraw.Draw(img)
+
+    b = get_basic(job)
+    topbar(d, b["organisation"], slide, total)
+
+    rows = vacancy_rows(job)
+
+    d.text((55, 145), "VACANCIES", font=F_TITLE, fill=NAVY)
+
+    if b["vacancies"]:
+        pill(
+            d,
+            f"TOTAL: {b['vacancies']}",
+            55,
+            210,
+            PALE_YELLOW,
+            NAVY,
+        )
+
+    y = 300
+
+    for index, (post, number) in enumerate(rows, 1):
+        h = 92
+
+        rounded_card(
+            d, 55, y, 970, h,
+            fill=WHITE,
+            outline=BORDER,
+            radius=15,
+        )
 
         d.text(
-            (90, y + 30),
-            label,
-            font=FONT_M,
+            (80, y + 29),
+            str(index),
+            font=F_SMALL_B,
             fill=BLUE,
         )
 
-        draw_wrapped(
+        draw_text(
             d,
-            url,
-            (90, y + 95),
-            FONT_SMALL,
+            post,
+            130,
+            y + 20,
+            F_BODY_B,
             DARK,
-            max_width=870,
+            width=700,
+            line_gap=4,
+            max_lines=2,
+        )
+
+        d.text(
+            (890, y + 27),
+            number,
+            font=F_H2,
+            fill=RED,
+        )
+
+        y += 105
+
+        if y > H - 130:
+            break
+
+    footer(d)
+    img.save(path, quality=95)
+
+
+def make_eligibility_slide(job, path, slide, total):
+    img = Image.new("RGB", (W, H), LIGHT)
+    d = ImageDraw.Draw(img)
+
+    b = get_basic(job)
+    topbar(d, b["organisation"], slide, total)
+
+    d.text((55, 145), "ELIGIBILITY", font=F_TITLE, fill=NAVY)
+
+    eligibility = b["eligibility"]
+
+    if eligibility:
+        rounded_card(
+            d, 55, 215, 970, 780,
+            fill=WHITE,
+            outline=BORDER,
+        )
+
+        draw_text(
+            d,
+            eligibility,
+            85,
+            250,
+            F_BODY,
+            DARK,
+            width=910,
+            line_gap=10,
+            max_lines=28,
+        )
+
+    # Show selection only when it exists.
+    if b["selection"]:
+        rounded_card(
+            d, 55, 1025, 970, 210,
+            fill=PALE_BLUE,
+            outline=(190, 211, 234),
+        )
+
+        d.text(
+            (85, 1055),
+            "SELECTION PROCESS",
+            font=F_H2,
+            fill=BLUE,
+        )
+
+        draw_text(
+            d,
+            b["selection"],
+            85,
+            1105,
+            F_BODY,
+            DARK,
+            width=900,
             line_gap=8,
             max_lines=5,
         )
 
-        y += 265
+    footer(d)
+    img.save(path, quality=95)
 
-    # Source
-    card(d, 60, min(y, 930), 960, 180, fill=LIGHT_BLUE, outline=LIGHT_BLUE)
 
-    d.text(
-        (90, min(y, 930) + 30),
-        "SOURCE",
-        font=FONT_M,
-        fill=BLUE,
-    )
+def make_links_slide(job, path, slide, total):
+    img = Image.new("RGB", (W, H), LIGHT)
+    d = ImageDraw.Draw(img)
 
-    draw_wrapped(
-        d,
-        job.get("detail_url") or "Not found",
-        (90, min(y, 930) + 90),
-        FONT_SMALL,
-        DARK,
-        max_width=870,
-        line_gap=8,
-        max_lines=3,
-    )
+    b = get_basic(job)
+    topbar(d, b["organisation"], slide, total)
+
+    d.text((55, 150), "OFFICIAL LINKS", font=F_TITLE, fill=NAVY)
+
+    links = useful_links(job)
+
+    y = 240
+
+    if links:
+        for label, url in links:
+            rounded_card(
+                d, 55, y, 970, 205,
+                fill=WHITE,
+                outline=BORDER,
+            )
+
+            d.text(
+                (85, y + 28),
+                label,
+                font=F_H2,
+                fill=BLUE,
+            )
+
+            draw_text(
+                d,
+                url,
+                85,
+                y + 85,
+                F_SMALL,
+                DARK,
+                width=900,
+                line_gap=8,
+                max_lines=5,
+            )
+
+            y += 230
+
+            if y > 1080:
+                break
 
     footer(d)
-    img.save(out, quality=95)
+    img.save(path, quality=95)
+
+
+def build_slide_plan(job):
+    """
+    Dynamic slide selection.
+
+    No slide is created merely because a schema field exists.
+    A slide/section is created only when useful source-derived
+    content is actually available.
+    """
+    b = get_basic(job)
+    rows = vacancy_rows(job)
+    links = useful_links(job)
+
+    plan = ["cover"]
+
+    info_available = any([
+        b["published"], b["start"], b["deadline"],
+        b["age"], b["pay"], b["fee"],
+    ])
+    if info_available:
+        plan.append("info")
+
+    if rows:
+        plan.append("vacancy")
+
+    if b["eligibility"] or b["selection"]:
+        plan.append("eligibility")
+
+    if links:
+        plan.append("links")
+
+    # Avoid pointless 5-slide output for sparse jobs.
+    return plan
 
 
 def generate_job_carousel(job, output_dir):
-    """
-    Generate a 5-slide Instagram carousel for one recruitment.
-    Canvas: 1080 x 1350 (4:5 Instagram portrait).
-    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -538,42 +720,30 @@ def generate_job_carousel(job, output_dir):
         or job.get("listing", {}).get("title")
         or "Recruitment"
     )
+    safe = safe_filename(title)
 
-    safe = re.sub(r"[^\w\s.-]", "", title)
-    safe = re.sub(r"\s+", "_", safe).strip("_")[:80]
+    plan = build_slide_plan(job)
+    total = len(plan)
+
+    makers = {
+        "cover": make_cover,
+        "info": make_info_slide,
+        "vacancy": make_vacancy_slide,
+        "eligibility": make_eligibility_slide,
+        "links": make_links_slide,
+    }
 
     slides = []
 
-    for i, maker in enumerate(
-        [
-            make_slide_1,
-            make_slide_2,
-            make_slide_3,
-            make_slide_4,
-            make_slide_5,
-        ],
-        1,
-    ):
-        path = output_dir / f"{i:02d}_{safe}.png"
-        maker(job, path, i, 5)
+    for number, kind in enumerate(plan, 1):
+        path = output_dir / f"{number:02d}_{safe}.png"
+        makers[kind](job, path, number, total)
         slides.append(path)
 
     return slides
 
 
 def generate_instagram_assets(results, output_root):
-    """
-    Generate one Instagram carousel folder per job.
-
-    Output:
-        social/instagram/
-          01_<job>/
-            01_*.png
-            ...
-            05_*.png
-          02_<job>/
-            ...
-    """
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -586,22 +756,14 @@ def generate_instagram_assets(results, output_root):
             or f"Recruitment_{index}"
         )
 
-        safe = re.sub(r"[^\w\s.-]", "", title)
-        safe = re.sub(r"\s+", "_", safe).strip("_")[:70]
+        job_dir = output_root / f"{index:02d}_{safe_filename(title)}"
 
-        job_dir = output_root / f"{index:02d}_{safe}"
+        slides = generate_job_carousel(job, job_dir)
 
-        slides = generate_job_carousel(
-            job,
-            job_dir,
-        )
-
-        all_assets.append(
-            {
-                "job": title,
-                "directory": job_dir,
-                "slides": slides,
-            }
-        )
+        all_assets.append({
+            "job": title,
+            "directory": job_dir,
+            "slides": slides,
+        })
 
     return all_assets

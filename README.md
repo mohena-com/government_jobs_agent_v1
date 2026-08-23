@@ -25,17 +25,17 @@ latest-job index to every individual job-detail page.
 ## Run
 
 ```bash
-python3.1 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python3.1 main.py --max-jobs 3
+python main.py --max-jobs 3
 ```
 
 For targeted debugging:
 
 ```bash
-python3.1 main.py --only "RCFL,AAI,UPSC"
+python main.py --only "RCFL,AAI,UPSC"
 ```
 
 The `--only` option is only a test filter; UPSC is NOT a separate source.
@@ -63,12 +63,3 @@ If an official link cannot be found, it says `Not found`; it is never invented.
 
 Only after this source traversal is working reliably will we add structured
 field extraction and then official-notification crawling.
-
-
-Without Instagram:
-
-python3.1 main.py --max-jobs 3
-
-With Instagram slides:
-
-python3.1 main.py --max-jobs 3 --instagram
