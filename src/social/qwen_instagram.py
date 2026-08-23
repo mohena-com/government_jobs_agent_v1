@@ -43,9 +43,20 @@ def generate_from_docx(
             urls = [x.get("url") for x in job.get("links", []) if isinstance(x, dict) and x.get("url")]
             verification = verify_urls(urls)
             verified_facts, _ = apply_to_job(job, verification)
-            # Preserve DOCX facts and overlay only facts supported by the official PDFs.
+            # Official verification is authoritative for the fields it owns.
+            # In particular, an empty verified value must be able to clear
+            # contaminated/untrusted DOCX boilerplate (e.g. selection_process).
+            authoritative_keys = {
+                'organisation', 'advertisement_number', 'published_date',
+                'total_vacancies', 'application_start', 'application_end',
+                'age_limit', 'pay_scale', 'eligibility', 'selection_process',
+                'how_to_apply', 'important_dates', 'official_links',
+                'official_verification', 'post_vacancies', 'raw_post_vacancies',
+                'derived_vacancy_sum',
+            }
             for k, v in verified_facts.items():
-                if v not in ("", None, []): facts[k] = v
+                if k in authoritative_keys or v not in ("", None, []):
+                    facts[k] = v
             facts["official_verification"] = verification
         gate = quality_gate(job, facts)
         if verify_official:

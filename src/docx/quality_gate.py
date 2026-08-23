@@ -57,6 +57,18 @@ def quality_gate(job: dict, facts: dict) -> dict:
     title_candidate = _numeric(facts.get("total_vacancies_candidate") or facts.get("title_vacancy_candidate"))
     derived = facts.get("derived_vacancy_sum")
 
+    # If official verification supplied canonical reconciled post vacancies,
+    # validate that canonical list and never trust raw parser totals downstream.
+    canonical = facts.get("post_vacancies")
+    official = facts.get("official_verification") or {}
+    if canonical:
+        canonical_sum = sum(int(x.get("vacancies") or 0) for x in canonical if isinstance(x, dict))
+        if total is not None and canonical_sum != total:
+            errors.append(f"Canonical post_vacancies sum {canonical_sum} differs from total_vacancies {total}")
+        expected = official.get("authoritative_expected_total")
+        if expected is not None and canonical_sum != int(expected):
+            errors.append(f"Canonical post_vacancies sum {canonical_sum} differs from authoritative total {expected}")
+
     if total is None and title_candidate is not None:
         warnings.append(f"Title contains candidate vacancy count {title_candidate}; verify against official vacancy table")
         verification.append(f"Verify total vacancies against official vacancy table; title candidate={title_candidate}")
@@ -100,7 +112,7 @@ def quality_gate(job: dict, facts: dict) -> dict:
     for field in ("eligibility", "selection_process"):
         value = _norm(facts.get(field))
         low = value.lower()
-        if value and ("read the notification" in low or "post information, selection procedure" in low):
+        if value and ("read the notification" in low or "post information, selection procedure" in low or "selection procedure, details, age limit" in low):
             errors.append(f"Unverified placeholder content in {field}")
             suspicious.append(field)
 

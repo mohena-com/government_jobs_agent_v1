@@ -309,9 +309,25 @@ def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
         facts['age_limit']='; '.join(f"{d['advertisement_number']}: {d['age_limit']}" for d in docs if d.get('age_limit'))
         facts['pay_scale']='; '.join(f"{d['advertisement_number']}: {d['pay_scale']}" for d in docs if d.get('pay_scale'))
         facts['eligibility']='Verified from official advertisements; post-specific educational qualifications are contained in the corresponding PDF.'
-        # Do not carry contaminated DOCX selection-process boilerplate into verified facts.
-        facts['selection_process']=''
-        facts['how_to_apply']=''
+        # Canonical reconciled vacancy structure. Downstream consumers MUST use
+        # this list, not raw parser totals from official_verification.documents.
+        facts['post_vacancies'] = [
+            {
+                'advertisement_number': x.get('advertisement_number',''),
+                'post': x.get('post',''),
+                'vacancies': x.get('vacancies'),
+                'source_url': x.get('source_url',''),
+                'verification_source': x.get('verification_source',''),
+            }
+            for x in verification.get('post_vacancies', [])
+        ]
+        facts['raw_post_vacancies'] = verification.get('raw_post_vacancies', [])
+        facts['derived_vacancy_sum'] = verification.get('combined_vacancies')
+        # Do not carry contaminated DOCX boilerplate into verified facts.
+        # Explicitly overwrite these fields because an empty verified value must
+        # be allowed to replace an untrusted DOCX value.
+        facts['selection_process'] = ''
+        facts['how_to_apply'] = ''
         facts['important_dates']=f"Application window: {verification.get('application_start','')} to {verification.get('application_end','')}" if verification.get('application_start') and verification.get('application_end') else ''
         facts['official_links']=[{'label':f"Official Notification {d['advertisement_number']}",'url':d['url']} for d in docs]
         facts['official_verification']=verification

@@ -61,3 +61,45 @@ def test_quality_gate_blocks_unverified_title_vacancy():
     assert result["status"] == "FAIL"
     assert result["verification_required"] is True
     assert any("2005" in x for x in result["verification_items"])
+
+
+def test_quality_gate_accepts_canonical_reconciled_post_vacancies():
+    facts = {
+        "organisation": "Rajasthan Rajya Vidyut Utpadan Nigam Ltd. (RVUNL)",
+        "post": "RVUNL Common Recruitment 2026",
+        "advertisement_number": "RVUN/Rectt.-2026-27/02; RVUN/Rectt.-2026-27/03",
+        "published_date": "04 August 2026",
+        "total_vacancies": "2005",
+        "application_start": "2026-08-05",
+        "application_end": "2026-08-25",
+        "age_limit": "Advertisement-specific age rules",
+        "eligibility": "Verified from official advertisements",
+        "official_links": [{"url": "https://example.gov.in/a.pdf"}],
+        "post_vacancies": [
+            {"post": "JE Electrical", "vacancies": 727},
+            {"post": "JE Mechanical", "vacancies": 110},
+            {"post": "JE Civil", "vacancies": 32},
+            {"post": "Junior Accountant", "vacancies": 371},
+            {"post": "Junior Assistant/ Commercial Assistant-II", "vacancies": 765},
+        ],
+        "official_verification": {"authoritative_expected_total": 2005},
+        "derived_vacancy_sum": 2005,
+        "selection_process": "",
+    }
+    result = quality_gate({}, facts)
+    assert result["status"] == "PASS"
+    assert result["errors"] == []
+
+
+def test_quality_gate_blocks_generic_selection_placeholder():
+    facts = {
+        "organisation": "RVUNL", "post": "Recruitment", "advertisement_number": "A/1",
+        "published_date": "04 August 2026", "total_vacancies": "10",
+        "application_start": "2026-08-05", "application_end": "2026-08-25",
+        "age_limit": "18-40", "eligibility": "Graduation",
+        "official_links": [{"url": "https://example.gov.in/a.pdf"}],
+        "selection_process": ". Read the notification for RVUNL eligibility, post information, selection procedure, Details, age limit, pay scale and all other information.",
+    }
+    result = quality_gate({}, facts)
+    assert result["status"] == "FAIL"
+    assert "selection_process" in result["suspicious_fields"]
