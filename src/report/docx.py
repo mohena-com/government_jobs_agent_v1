@@ -531,14 +531,14 @@ def add_vacancy_table(
 # LINKS
 # =========================================================
 
-def add_links(
-    doc,
-    job
-):
+def add_links(doc, job):
 
     links = []
 
+    # -----------------------------------------------------
     # Application links
+    # -----------------------------------------------------
+
     for link in job.get(
         "application_links",
         []
@@ -547,7 +547,6 @@ def add_links(
         url = link.get("url")
 
         if url:
-
             links.append(
                 (
                     "Apply Online",
@@ -555,7 +554,10 @@ def add_links(
                 )
             )
 
+    # -----------------------------------------------------
     # Notification links
+    # -----------------------------------------------------
+
     for link in job.get(
         "notification_links",
         []
@@ -564,7 +566,6 @@ def add_links(
         url = link.get("url")
 
         if url:
-
             links.append(
                 (
                     "Official Notification",
@@ -572,9 +573,11 @@ def add_links(
                 )
             )
 
-    # De-duplicate
-    unique = []
+    # -----------------------------------------------------
+    # Remove duplicates
+    # -----------------------------------------------------
 
+    unique = []
     seen = set()
 
     for label, url in links:
@@ -595,7 +598,10 @@ def add_links(
                 )
             )
 
-    # External official candidates
+    # -----------------------------------------------------
+    # Official candidates
+    # -----------------------------------------------------
+
     existing_urls = {
         url
         for _, url in unique
@@ -627,6 +633,10 @@ def add_links(
                 url
             )
 
+    # -----------------------------------------------------
+    # No links
+    # -----------------------------------------------------
+
     if not unique:
 
         doc.add_paragraph(
@@ -635,8 +645,12 @@ def add_links(
 
         return
 
+    # -----------------------------------------------------
+    # LINK TABLE
+    # -----------------------------------------------------
+
     table = doc.add_table(
-        rows=0,
+        rows=1,
         cols=2
     )
 
@@ -644,7 +658,39 @@ def add_links(
         WD_TABLE_ALIGNMENT.CENTER
     )
 
-    for label, url in unique[:6]:
+    header = table.rows[0]
+
+    set_repeat_table_header(
+        header
+    )
+
+    set_cell_text(
+        header.cells[0],
+        "Type",
+        True
+    )
+
+    set_cell_text(
+        header.cells[1],
+        "URL",
+        True
+    )
+
+    set_cell_shading(
+        header.cells[0],
+        "D9EAF7"
+    )
+
+    set_cell_shading(
+        header.cells[1],
+        "D9EAF7"
+    )
+
+    # -----------------------------------------------------
+    # ACTUAL URL AS CLICKABLE TEXT
+    # -----------------------------------------------------
+
+    for label, url in unique:
 
         cells = table.add_row().cells
 
@@ -660,16 +706,19 @@ def add_links(
             1
         ].paragraphs[0]
 
+        # IMPORTANT:
+        # Display the actual URL instead of "Open link".
         add_hyperlink(
             paragraph,
-            "Open link",
+            url,
             url
         )
+
+        paragraph.paragraph_format.space_after = Pt(0)
 
     set_table_borders(
         table
     )
-
 
 # =========================================================
 # ONE JOB
