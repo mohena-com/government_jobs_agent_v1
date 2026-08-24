@@ -65,6 +65,106 @@ def _prepare_presentation_facts(locked_facts):
             fallbacks[field] = fallback
     return facts, fallbacks
 
+
+
+def _date_tokens(text: str) -> list[str]:
+    import re
+    from datetime import date
+    months = {m.lower(): i for i, m in enumerate((
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ), 1)}
+    out = []
+    for m in re.finditer(r"(?<!\d)(\d{1,2})[/-](\d{1,2})[/-](20\d{2})(?!\d)", text or ""):
+        try: out.append(date(int(m.group(3)), int(m.group(2)), int(m.group(1))).isoformat())
+        except ValueError: pass
+    for m in re.finditer(r"(?<!\d)(20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)", text or ""):
+        try: out.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat())
+        except ValueError: pass
+    for m in re.finditer(r"(?<!\d)(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})(?!\d)", text or "", re.I):
+        try: out.append(date(int(m.group(3)), months[m.group(2).lower()], int(m.group(1))).isoformat())
+        except (ValueError, KeyError): pass
+    return list(dict.fromkeys(out))
+
+def _crosscheck_application_dates(facts: dict, job: dict) -> dict:
+    """V1.9.33: bind application dates to semantic fields and verify them against DOCX evidence."""
+    evidence_parts = [
+        job.get("opening_deadline_display", ""),
+        (job.get("fields") or {}).get("important_dates", ""),
+        (job.get("fields") or {}).get("how_to_apply", ""),
+        job.get("application_date_evidence", ""),
+    ]
+    evidence = "\n".join(str(x or "") for x in evidence_parts)
+    allowed = set(_date_tokens(evidence))
+    start = str(facts.get("application_start") or "").strip()
+    end = str(facts.get("application_end") or "").strip()
+    start_dates = set(_date_tokens(start))
+    end_dates = set(_date_tokens(end))
+    result = {"status": "PASS", "document_evidence": evidence, "allowed_application_dates": sorted(allowed), "errors": [], "warnings": []}
+
+    if start_dates and allowed and not start_dates.issubset(allowed):
+        result["errors"].append(f"application_start {start!r} is not supported by DOCX date evidence")
+    if end_dates and allowed and not end_dates.issubset(allowed):
+        result["errors"].append(f"application_end {end!r} is not supported by DOCX date evidence")
+
+    if result["errors"]:
+        result["status"] = "FAIL"
+        # Do not allow an unverified generated date to reach Qwen.
+        facts["application_start"] = ""
+        facts["application_end"] = ""
+        facts["application_dates_crosscheck_error"] = result["errors"]
+    else:
+        facts["application_dates_crosscheck"] = {
+            "status": "PASS",
+            "document_evidence": evidence,
+            "allowed_application_dates": sorted(allowed),
+        }
+    return result
+
+
+def _enforce_application_dates_on_plan(plan: dict, facts: dict) -> dict:
+    """V1.9.33 hotfix: deterministically keep slide 5 date content bound to facts.
+
+    Qwen remains responsible for design/copy, but application dates are safety-
+    critical structured facts. If slide 5 omits them, add one compact bullet; if
+    facts are unavailable, add the controlled fallback instead of inventing dates.
+    """
+    if not isinstance(plan, dict):
+        return plan
+    slides = plan.get("slides")
+    if not isinstance(slides, list) or not slides:
+        return plan
+    target = slides[4] if len(slides) >= 5 and isinstance(slides[4], dict) else None
+    if target is None:
+        return plan
+
+    bullets = target.get("bullets")
+    if not isinstance(bullets, list):
+        bullets = []
+
+    text = " ".join([str(target.get("headline") or ""), str(target.get("subtitle") or "")] + [str(x) for x in bullets])
+    low = text.lower()
+
+    start = str(facts.get("application_start") or "").strip()
+    end = str(facts.get("application_end") or "").strip()
+
+    def present(value: str) -> bool:
+        if not value:
+            return False
+        return value.lower() in low or value.replace(" ", "").lower() in low.replace(" ", "")
+
+    if start and end:
+        if not (present(start) and present(end)):
+            bullets.append(f"Application: {start} → {end}")
+    elif not start and not end:
+        fallback = str((facts.get("presentation_fallbacks") or {}).get("application_start") or "Refer to Official Notification")
+        if "refer to official notification" not in low and "see official notification" not in low:
+            bullets.append(f"Application dates: {fallback}")
+
+    target["bullets"] = bullets[:8]
+    plan["slides"] = slides
+    return plan
+
 def generate_from_docx(
     docx_path: str | Path,
     output_dir: str | Path,
@@ -184,6 +284,19 @@ def generate_from_docx(
                     if org and org.lower() != "organisation not identified":
                         facts["organisation"] = org
             facts["official_verification"] = verification
+
+        # V1.9.33: application dates are semantic facts, not free-form model text.
+        # Cross-check the values after DOCX/official extraction and before the
+        # presentation payload is constructed. If a date cannot be tied back to
+        # document evidence, it is withheld from Qwen and the presentation uses
+        # the controlled fallback instead of a guessed date.
+        date_crosscheck = _crosscheck_application_dates(facts, job)
+        facts["application_dates_crosscheck"] = date_crosscheck
+        if date_crosscheck.get("status") == "FAIL":
+            facts["extraction_notes"] = list(facts.get("extraction_notes") or []) + [
+                "V1.9.33 withheld application dates because they failed DOCX semantic cross-check"
+            ]
+
         gate = quality_gate(job, facts)
         if verify_official:
             gate["official_verification_status"] = verification.get("status") if verification else "NOT_RUN"
@@ -209,6 +322,7 @@ def generate_from_docx(
             "quality_gate": gate,
             "fatal_generation_errors": fatal_errors,
             "official_verification": verification,
+            "application_dates_crosscheck": date_crosscheck,
         }
 
         # V1.9.29: verification-to-generation decoupling. Missing/unreadable
@@ -228,6 +342,7 @@ def generate_from_docx(
             attempts = []
             raw_plan = client.generate_slide_plan(presentation_facts, slide_count=slide_count)
             plan = sanitize_slide_plan(raw_plan)
+            plan = _enforce_application_dates_on_plan(plan, presentation_facts)
             plan = _attach_verified_links(plan, facts)
             warnings = validate_slide_plan(plan, presentation_facts)
             slide_gate = slide_quality_gate(plan, presentation_facts)
@@ -238,6 +353,7 @@ def generate_from_docx(
                     presentation_facts, plan, slide_gate.get("errors", []), slide_count=slide_count
                 )
                 repaired = sanitize_slide_plan(repaired_raw)
+                repaired = _enforce_application_dates_on_plan(repaired, presentation_facts)
                 repaired = _attach_verified_links(repaired, facts)
                 repaired_warnings = validate_slide_plan(repaired, presentation_facts)
                 repaired_gate = slide_quality_gate(repaired, presentation_facts)
@@ -299,7 +415,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.29", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.33", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -312,5 +428,5 @@ def generate_from_docx(
     return summary_path, generated
 
 
-# V1.9.32 prompt policy
+# V1.9.33 prompt policy
 '\nPRESENTATION COMPLETENESS POLICY:\n- Never invent missing recruitment facts.\n- Never leave a required presentation section blank.\n- If a factual field is unavailable, use the supplied presentation fallback,\n  such as "See Official Notification" or "Refer to Official Notification".\n- Compress long content to fit the slide; prioritize the most decision-useful facts.\n- A slide may omit secondary detail only when the omitted detail is safely covered\n  by a concise fallback or "See Official Notification".\n- Generic design CTAs such as "APPLY NOW", "CHECK DETAILS", and "READ NOTIFICATION"\n  are presentation copy, not factual claims.\n'
