@@ -177,6 +177,16 @@ def _short_org(org: str) -> str:
     return text[:34]
 
 
+def _section_bar(draw, title: str, x: int, y: int, w: int = 970, accent: tuple[int,int,int] = BLUE, sub: str = ""):
+    """Professional blue section bar with a yellow sub-bar highlight."""
+    draw.rounded_rectangle((x, y, x + w, y + 58), radius=14, fill=accent)
+    draw.rectangle((x, y + 51, x + min(210, w), y + 58), fill=YELLOW)
+    draw.text((x + 18, y + 14), _clean(title).upper(), font=F_SMALL_B, fill=WHITE)
+    if sub:
+        draw.text((x + w - 18, y + 15), _clean(sub), font=F_TINY_B, fill=WHITE, anchor="ra")
+    return y + 72
+
+
 def _header(img, draw, org: str, number: int, total: int, kicker="GOVERNMENT RECRUITMENT"):
     # Strong poster-like masthead.
     draw.rectangle((0, 0, W, 116), fill=NAVY)
@@ -187,14 +197,16 @@ def _header(img, draw, org: str, number: int, total: int, kicker="GOVERNMENT REC
     _text(draw, _short_org(org) or "Government Jobs", 115, 23, F_H2, WHITE, 720, 3, 1)
     draw.text((115, 76), kicker, font=F_TINY_B, fill=(218, 231, 246))
     draw.text((W - 115, 34), f"{number}/{total}", font=F_SMALL_B, fill=WHITE)
-    # small gold rule
-    draw.rectangle((0, 112, W, 116), fill=YELLOW)
+    # layered brand bars: blue base + yellow accent
+    draw.rectangle((0, 112, W, 122), fill=BLUE)
+    draw.rectangle((0, 122, int(W * 0.34), 128), fill=YELLOW)
 
 
 def _footer(draw, text="READ THE OFFICIAL NOTIFICATION BEFORE APPLYING"):
-    draw.rectangle((0, H - 58, W, H), fill=NAVY)
-    draw.text((50, H - 39), text, font=F_TINY_B, fill=WHITE)
-    draw.text((W - 130, H - 39), "• GOVT JOB", font=F_TINY_B, fill=YELLOW)
+    draw.rectangle((0, H - 68, W, H), fill=NAVY)
+    draw.rectangle((0, H - 68, int(W * 0.32), H - 62), fill=YELLOW)
+    draw.text((50, H - 46), text, font=F_TINY_B, fill=WHITE)
+    draw.text((W - 130, H - 46), "• GOVT JOB", font=F_TINY_B, fill=YELLOW)
 
 
 def _fact_rows(facts: dict, key: str) -> list[dict]:
@@ -281,15 +293,18 @@ def _compact_pay(text: str) -> str:
     if not s:
         return "See official notification."
     parts = []
-    for pat in [r"Pay\s*Level\s*[-:]?\s*([0-9]+)", r"Level[-:]?\s*([0-9]+)", r"Basic(?: Pay)?\s*[:\-]?\s*(?:₹\s*)?[\d,]+(?:\s*[–-]\s*(?:₹\s*)?[\d,]+)?", r"₹\s*[\d,]+(?:\s*[–-]\s*₹\s*[\d,]+)?(?:\s*(?:per month|/month))?"]:
-        m = re.search(pat, s, re.I)
-        if m:
+    for value in re.findall(r"(?:Pay\s*Level|Level)[-:\s]*([0-9]+)", s, re.I):
+        label = f"Level-{value}"
+        if label not in parts:
+            parts.append(label)
+    for pat in [r"Basic(?: Pay)?\s*[:\-]?\s*(?:₹\s*)?[\d,]+(?:\s*[–-]\s*(?:₹\s*)?[\d,]+)?", r"₹\s*[\d,]+(?:\s*[–-]\s*₹\s*[\d,]+)?(?:\s*(?:per month|/month))?"]:
+        for m in re.finditer(pat, s, re.I):
             value = m.group(0).strip()
             if value not in parts:
                 parts.append(value)
     if parts:
-        return " • ".join(parts[:2])
-    return _compact_qualification(s, 80)
+        return " • ".join(parts[:3])
+    return _compact_qualification(s, 100)
 
 
 def _compact_fee(text: str) -> str:
@@ -346,7 +361,11 @@ def _draw_title(img, draw, slide, facts, number, total):
     _header(img, draw, org, number, total, "GOVERNMENT RECRUITMENT • 2026")
     y = 155
     draw.text((55, y), "RECRUITMENT", font=F_HERO, fill=NAVY)
-    draw.text((55, y + 76), "2026–27", font=F_HERO_2, fill=BLUE)
+    # Derive the recruitment year from locked facts instead of hardcoding a cycle.
+    year_match = re.search(r"20\d{2}", " ".join([_clean(facts.get("published_date")), _clean(facts.get("application_start")), _clean(facts.get("application_end")), _clean(facts.get("post"))]))
+    year_text = year_match.group(0) if year_match else ""
+    if year_text:
+        draw.text((55, y + 76), year_text, font=F_HERO_2, fill=BLUE)
     y += 150
 
     title = _clean(facts.get("post") or slide.get("headline") or "Government Recruitment")
@@ -397,14 +416,14 @@ def _draw_title(img, draw, slide, facts, number, total):
 def _draw_vacancies(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "RECRUITMENT • POST-WISE VACANCIES")
-    draw.text((55, 150), "2,005", font=F_HERO, fill=NAVY) if str(facts.get("total_vacancies")) == "2005" else None
     headline = _clean(slide.get("headline") or "VACANCY BREAKDOWN")
-    if str(facts.get("total_vacancies") or "") != "2005":
-        draw.text((55, 150), headline, font=F_TITLE, fill=NAVY)
-        y = 225
+    total_value = _clean(facts.get("total_vacancies") or facts.get("combined_vacancies"))
+    _section_bar(draw, headline, 55, 145, 970, BLUE, "01")
+    if total_value:
+        _pill(draw, f"TOTAL VACANCIES: {total_value}", 55, 215, PALE_YELLOW, NAVY)
+        y = 285
     else:
-        draw.text((55, 225), headline, font=F_H1, fill=BLUE)
-        y = 275
+        y = 225
 
     rows = _vacancies(facts)
     if not rows:
@@ -416,25 +435,30 @@ def _draw_vacancies(img, draw, slide, facts, number, total):
         draw.text((70, y + 20), "POST", font=F_SMALL_B, fill=WHITE)
         draw.text((930, y + 20), "VACANCIES", font=F_SMALL_B, fill=WHITE, anchor="ra")
         y += 70
-        for idx, (post, count) in enumerate(rows, 1):
-            h = 112 if len(post) < 43 else 135
+        visible_rows = min(len(rows), 8)
+        available_h = 760
+        row_h = max(68, min(96, int(available_h / max(visible_rows, 1)) - 8))
+        for idx, (post, count) in enumerate(rows[:visible_rows], 1):
             fill = WHITE if idx % 2 else PALE_BLUE
-            _card(draw, 45, y, 990, h, fill, BORDER, 16, 1)
-            draw.ellipse((70, y + 28, 116, y + 74), fill=YELLOW)
-            draw.text((93, y + 38), str(idx), font=F_SMALL_B, fill=NAVY, anchor="mm")
-            _text(draw, post, 135, y + 25, F_BODY_B if len(post) < 45 else F_SMALL_B, DARK, 700, 5, 2)
-            draw.text((970, y + 37), str(count), font=F_H1, fill=RED, anchor="ra")
-            y += h + 10
-        _card(draw, 45, y + 5, 990, 95, NAVY, NAVY, 18, 1)
-        draw.text((75, y + 34), "TOTAL", font=F_H2, fill=WHITE)
-        draw.text((970, y + 29), _clean(facts.get("total_vacancies") or ""), font=F_H1, fill=YELLOW, anchor="ra")
+            _card(draw, 45, y, 990, row_h, fill, BORDER, 14, 1)
+            draw.ellipse((68, y + (row_h-34)//2, 102, y + (row_h-34)//2 + 34), fill=YELLOW)
+            draw.text((85, y + row_h//2 - 1), str(idx), font=F_TINY_B, fill=NAVY, anchor="mm")
+            _text(draw, post, 120, y + 12, F_SMALL_B if len(post) < 48 else F_TINY_B, DARK, 730, 4, 2)
+            draw.text((970, y + row_h//2 - 1), str(count), font=F_H2, fill=RED, anchor="ra")
+            y += row_h + 7
+        if len(rows) > visible_rows:
+            _pill(draw, f"+{len(rows)-visible_rows} additional post(s) • SEE OFFICIAL NOTIFICATION", 55, 1060, PALE_YELLOW, NAVY)
+        elif total_value:
+            _card(draw, 45, 1055, 990, 75, NAVY, NAVY, 16, 1)
+            draw.text((75, 1078), "TOTAL", font=F_SMALL_B, fill=WHITE)
+            draw.text((970, 1072), total_value, font=F_H1, fill=YELLOW, anchor="ra")
     _footer(draw)
 
 
 def _draw_eligibility(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "WHO CAN APPLY?")
-    draw.text((55, 150), "ELIGIBILITY", font=F_TITLE, fill=NAVY)
+    _section_bar(draw, "WHO CAN APPLY?", 55, 145, 970, BLUE, "03")
     draw.text((58, 210), "Essential qualification by post", font=F_H2, fill=MUTED)
 
     eligibility = _eligibility_rows(facts)
@@ -476,7 +500,7 @@ def _draw_eligibility(img, draw, slide, facts, number, total):
 def _draw_age_pay_fee(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "AGE • PAY • APPLICATION FEE")
-    draw.text((55, 150), "AT A GLANCE", font=F_TITLE, fill=NAVY)
+    _section_bar(draw, "AT A GLANCE", 55, 145, 970, BLUE, "04")
 
     age = _compact_age(facts.get("age_limit"))
     pay = _compact_pay(facts.get("pay_scale") or facts.get("salary"))
@@ -610,11 +634,174 @@ def _draw_apply_links(img, draw, slide, facts, number, total):
     _footer(draw, "SCAN THE OFFICIAL SOURCE • DO NOT RELY ON THIRD-PARTY LINKS")
 
 
+
+def _common_two_slide_header(draw, facts, number, total, section):
+    """Identical masthead + quick-info strip for both two-slide layouts."""
+    org = _clean(facts.get("organisation"))
+    _header(None, draw, org, number, total, "GOVERNMENT RECRUITMENT")
+    # Main recruitment line.
+    title = _clean(facts.get("post") or "RECRUITMENT 2026")
+    draw.text((55, 145), "RECRUITMENT", font=F_TITLE, fill=NAVY)
+    # Highlighted compact designation line.
+    rows = _vacancies(facts)
+    names = [p for p, _ in rows]
+    if names:
+        sub = " • ".join(names[:3]) + (f" • +{len(names)-3} more" if len(names) > 3 else "")
+    else:
+        sub = title
+    _text(draw, sub, 55, 205, F_H2, DARK, 700, 5, 2)
+    total_v = _clean(facts.get("total_vacancies") or facts.get("combined_vacancies"))
+    _card(draw, 790, 142, 235, 120, NAVY, NAVY, 18, 2)
+    draw.text((810, 160), "TOTAL VACANCIES", font=F_TINY_B, fill=(214, 228, 245))
+    draw.text((810, 190), total_v or "Not specified", font=F_H2, fill=YELLOW)
+    # Quick-info bar.
+    y = 285
+    _card(draw, 35, y, 1010, 88, WHITE, BORDER, 16, 2)
+    facts4 = [
+        ("LOCATION", _first(facts.get("job_location"), facts.get("location"), "Not specified"), BLUE),
+        ("ORGANISATION", _short_org(org) or "Not specified", BLUE),
+        ("APP START", _date_label(facts.get("application_start")) or "Not specified", GREEN),
+        ("APP END", _date_label(facts.get("application_end")) or "Not specified", RED),
+    ]
+    widths = [245, 245, 245, 245]
+    x = 45
+    for i, (label, value, accent) in enumerate(facts4):
+        if i:
+            draw.line((x, y + 13, x, y + 75), fill=LIGHT_LINE, width=2)
+        draw.text((x + 14, y + 13), label, font=F_TINY_B, fill=accent)
+        _text(draw, value, x + 14, y + 40, F_SMALL_B, DARK, widths[i] - 28, 3, 2)
+        x += widths[i]
+    draw.text((55, 390), section, font=F_H1, fill=NAVY)
+
+
+def _draw_two_job_details(img, draw, slide, facts, number, total):
+    _common_two_slide_header(draw, facts, number, total, "JOB DETAILS")
+    rows = _vacancies(facts)
+    elig = _eligibility_rows(facts)
+    ordered = []
+    for post, count in rows:
+        match = next((r for r in elig if _post_match(post, r.get("post", ""))), None)
+        ordered.append((post, count, (match or {}).get("qualification", ""), (match or {}).get("experience", "")))
+    if not ordered:
+        for r in elig:
+            ordered.append((r.get("post", "Qualification"), "", r.get("qualification", ""), r.get("experience", "")))
+    # Vacancy + qualification grid.
+    x, y, w = 45, 425, 990
+    _card(draw, x, y, w, 62, NAVY, NAVY, 14, 1)
+    draw.text((70, y + 22), "POST", font=F_TINY_B, fill=WHITE)
+    draw.text((275, y + 22), "VACANCY", font=F_TINY_B, fill=WHITE)
+    draw.text((365, y + 22), "ESSENTIAL QUALIFICATION", font=F_TINY_B, fill=WHITE)
+    y += 68
+    max_rows = min(len(ordered), 7)
+    row_h = 84 if max_rows <= 5 else 76
+    for i, (post, count, qual, exp) in enumerate(ordered[:max_rows]):
+        fill = WHITE if i % 2 == 0 else PALE_BLUE
+        _card(draw, x, y, w, row_h, fill, BORDER, 12, 1)
+        _text(draw, post, x + 18, y + 13, F_SMALL_B, NAVY, 185, 3, 2)
+        draw.text((300, y + 25), count or "—", font=F_H2, fill=RED, anchor="mm")
+        q = _compact_qualification(qual or "Refer to Official Notification", 285)
+        _text(draw, q, x + 320, y + 10, F_TINY if len(q) > 150 else F_SMALL, DARK, 640, 3, 3)
+        y += row_h + 7
+    if len(ordered) > max_rows:
+        _pill(draw, f"+{len(ordered)-max_rows} more verified posts • SEE NOTIFICATION FOR FULL POST-WISE DETAILS", 55, y + 2, PALE_YELLOW, NAVY)
+        y += 48
+    # Age + selection compact bottom row.
+    bottom = min(y + 12, 1030)
+    card_h = 170
+    left_w = 465
+    _card(draw, 45, bottom, left_w, card_h, PALE_BLUE, BORDER, 18, 2)
+    draw.text((70, bottom + 18), "AGE LIMIT", font=F_SMALL_B, fill=BLUE)
+    _text(draw, _compact_age(facts.get("age_limit")), 70, bottom + 52, F_H2, DARK, 410, 4, 2)
+    _text(draw, "Relaxation: as specified in the official notification.", 70, bottom + 100, F_SMALL, MUTED, 410, 3, 2)
+    _card(draw, 535, bottom, 500, card_h, WHITE, BORDER, 18, 2)
+    draw.text((560, bottom + 18), "SELECTION PROCESS", font=F_SMALL_B, fill=GREEN)
+    selection = _clean(facts.get("selection_process")) or "Refer to Official Notification"
+    _text(draw, _compact_qualification(selection, 210), 560, bottom + 52, F_BODY_B if len(selection) < 100 else F_SMALL, DARK, 450, 4, 4)
+    _footer(draw)
+
+
+def _draw_two_at_a_glance(img, draw, slide, facts, number, total):
+    _common_two_slide_header(draw, facts, number, total, "AT A GLANCE")
+    age = _compact_age(facts.get("age_limit"))
+    pay = _compact_pay(facts.get("pay_scale") or facts.get("salary"))
+    fee = _compact_fee(facts.get("application_fee"))
+    _stat_card(draw, 45, 425, 305, 165, "AGE LIMIT", age, BLUE, PALE_BLUE, "A")
+    _stat_card(draw, 387, 425, 305, 165, "PAY / SALARY", pay, GREEN, PALE_GREEN, "₹")
+    _stat_card(draw, 729, 425, 306, 165, "APPLICATION FEE", fee, RED, PALE_RED, "₹")
+
+    # Dates card.
+    _card(draw, 45, 615, 470, 430, WHITE, BORDER, 20, 2)
+    draw.text((70, 645), "IMPORTANT DATES", font=F_H2, fill=NAVY)
+    dates = [
+        ("Notification", _date_label(facts.get("published_date"))),
+        ("Application Start", _date_label(facts.get("application_start"))),
+        ("Application Deadline", _date_label(facts.get("application_end"))),
+    ]
+    extra = facts.get("important_dates")
+    if isinstance(extra, list):
+        for item in extra:
+            if isinstance(item, dict):
+                label = _clean(item.get("label") or item.get("name"))
+                value = _date_label(item.get("date") or item.get("value"))
+                if label and value and not any(label.lower() == d[0].lower() for d in dates):
+                    dates.append((label, value))
+    yy = 705
+    for label, value in dates[:5]:
+        draw.ellipse((75, yy + 7, 87, yy + 19), fill=BLUE)
+        draw.text((105, yy), label, font=F_SMALL_B, fill=NAVY)
+        _text(draw, value or "Refer to Official Notification", 105, yy + 30, F_SMALL, DARK, 360, 3, 2)
+        yy += 82
+
+    # Documents/instructions card.
+    _card(draw, 545, 615, 490, 430, WHITE, BORDER, 20, 2)
+    draw.text((570, 645), "DOCUMENTS / HOW TO APPLY", font=F_H2, fill=NAVY)
+    bullets = _slide_bullets(slide)
+    # Keep only short applicant-facing instructions; avoid duplicated audit/source text.
+    cleaned = []
+    for b in bullets:
+        low = b.lower()
+        if any(k in low for k in ("quality gate", "validation", "parsed vacancies", "authoritative vacancies", "pdf extraction")):
+            continue
+        if not any(k in low for k in ("document", "photo", "signature", "id proof", "certificate", "marksheet", "apply", "application", "submit", "read the official", "notification", "keep required", "experience", "eligibility")):
+            continue
+        b = _compact_qualification(b, 130)
+        if b and b not in cleaned:
+            cleaned.append(b)
+    if not cleaned:
+        cleaned = ["Keep required documents ready.", "Check post-wise eligibility and experience.", "Submit the online application within the given dates."]
+    _draw_bullets(draw, cleaned[:6], 575, 705, 425, 1010, GREEN, 6, F_SMALL)
+
+    # Official source CTA: structured links are shown as short labels/QRs, never raw URLs.
+    links = [x for x in (slide.get("links") or facts.get("official_links") or []) if isinstance(x, dict) and x.get("url")]
+    unique, seen = [], set()
+    for link in links:
+        url = str(link.get("url")).strip()
+        if url and url not in seen:
+            seen.add(url)
+            unique.append({"label": _clean(link.get("label") or "Official Source"), "url": url})
+    if unique and qrcode is not None:
+        qr = _make_qr(unique[0]["url"], 125)
+        if qr:
+            img.paste(qr, (565, 900))
+        draw.text((710, 910), "OFFICIAL SOURCE", font=F_SMALL_B, fill=BLUE)
+        draw.text((710, 945), _domain(unique[0]["url"]), font=F_SMALL_B, fill=DARK)
+        draw.text((710, 978), "SCAN TO OPEN", font=F_TINY_B, fill=MUTED)
+
+    deadline = _date_label(facts.get("application_end")) or "the deadline"
+    _card(draw, 45, 1070, 990, 115, NAVY, NAVY, 18, 2)
+    draw.text((75, 1092), "APPLY ONLINE ONLY THROUGH THE OFFICIAL WEBSITE", font=F_SMALL_B, fill=YELLOW)
+    _text(draw, f"Before {deadline}", 75, 1128, F_H2, WHITE, 880, 4, 1)
+    _footer(draw)
+
 def render_slide(slide: dict[str, Any], facts: dict, number: int, total: int, path: Path):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
     slide_type = str(slide.get("type") or "").lower()
-    if slide_type == "title":
+    if slide_type == "job_details":
+        _draw_two_job_details(img, draw, slide, facts, number, total)
+    elif slide_type == "at_a_glance":
+        _draw_two_at_a_glance(img, draw, slide, facts, number, total)
+    elif slide_type == "title":
         _draw_title(img, draw, slide, facts, number, total)
     elif slide_type == "vacancies":
         _draw_vacancies(img, draw, slide, facts, number, total)
@@ -648,11 +835,13 @@ def render_qwen_plan(plan_path: str | Path, output_dir: str | Path, job_index: i
     for job in data.get("jobs", []):
         if job_index is not None and job.get("job_index") != job_index:
             continue
-        if job.get("presentation_ready") is False:
-            continue
+        # V1.9.26: rendering is a separate delivery layer. A job may have
+        # source/slide QA warnings and still be renderable when it has a
+        # complete two-slide plan. The QA result remains in the JSON audit;
+        # rendering must not silently discard the job.
         plan = job.get("slide_plan") or {}
         slides = plan.get("slides") or []
-        if not slides:
+        if not slides or len(slides) != 6:
             continue
         facts = job.get("locked_facts") or {}
         organisation = _clean(facts.get("organisation"))

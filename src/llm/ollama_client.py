@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -15,6 +16,7 @@ class OllamaClient:
     host: str = "http://localhost:11434"
     model: str = "qwen3:8b"
     timeout: int = 300
+    prompt_path: str | None = None
 
     def __post_init__(self):
         self.host = self.host.rstrip("/")
@@ -55,19 +57,8 @@ class OllamaClient:
 
     @staticmethod
     def _six_slide_schema() -> dict:
-        """Use six fixed object properties so Qwen cannot reorder/reuse slide types.
-
-        An array item with an enum still lets a small model choose the wrong type
-        for a position. Fixed properties make the JSON contract positional.
-        """
-        slide_types = [
-            ("slide_1", 1, "title"),
-            ("slide_2", 2, "vacancies"),
-            ("slide_3", 3, "eligibility"),
-            ("slide_4", 4, "age_pay_fee"),
-            ("slide_5", 5, "dates_selection"),
-            ("slide_6", 6, "apply_links"),
-        ]
+        """Fixed six-slide schema for the presentation layer."""
+        kinds = ["title", "vacancies", "eligibility", "age_pay_fee", "dates_selection", "apply_links"]
         def slide_schema(number: int, kind: str) -> dict:
             return {
                 "type": "object",
@@ -76,7 +67,7 @@ class OllamaClient:
                     "type": {"type": "string", "enum": [kind]},
                     "headline": {"type": "string"},
                     "subtitle": {"type": "string"},
-                    "bullets": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+                    "bullets": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
                     "facts_used": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["number", "type", "headline", "subtitle", "bullets", "facts_used"],
@@ -84,118 +75,49 @@ class OllamaClient:
             }
         return {
             "type": "object",
-            "properties": {name: slide_schema(number, kind) for name, number, kind in slide_types},
-            "required": [name for name, _, _ in slide_types],
+            "properties": {f"slide_{i}": slide_schema(i, kind) for i, kind in enumerate(kinds, 1)},
+            "required": [f"slide_{i}" for i in range(1, 7)],
             "additionalProperties": False,
         }
 
     @staticmethod
-    def _fixed_plan_to_array(data: dict) -> dict:
-        """Convert the fixed six-property model response to the renderer's slide array."""
-        slides = []
-        for key in ("slide_1", "slide_2", "slide_3", "slide_4", "slide_5", "slide_6"):
-            value = data.get(key)
-            if not isinstance(value, dict):
-                raise ValueError(f"Missing structured response property: {key}")
-            slides.append(value)
-        return {"slides": slides}
+    def _fixed_six_slide_to_array(data: dict) -> dict:
+        return {"slides": [data[f"slide_{i}"] for i in range(1, 7)]}
+
+    def _load_slide_prompt(self) -> str:
+        candidates = []
+        if self.prompt_path:
+            candidates.append(Path(self.prompt_path))
+        candidates.append(Path("prompts_instagram_v1.9.28.txt"))
+        for path in candidates:
+            if path.exists():
+                return path.read_text(encoding="utf-8").strip()
+        raise FileNotFoundError("Instagram prompt file not found")
 
     def generate_slide_plan(self, facts: dict, slide_count: int = 6) -> dict:
-        """Create a complete job-seeker-focused six-slide recruitment carousel.
-
-        V1.9.16 uses a positional structured-output schema instead of asking a
-        small model to choose slide types in an array. This prevents the common
-        failure where Qwen repeats the vacancies slide for slides 3/4/5/6.
-        """
+        """Create a six-slide, applicant-facing Instagram recruitment carousel."""
         if slide_count != 6:
-            raise ValueError("V1.9.16 presentation mode requires exactly 6 slides")
-
+            raise ValueError("Presentation mode requires exactly 6 slides")
         schema = self._six_slide_schema()
-        system = """
-You are an expert Graphic Designer and Visual Content Strategist specializing
-in government/corporate recruitment infographics for Instagram.
-
-GOAL
-Analyze LOCKED_FACTS and Create a COMPLETE six-slide Instagram 
-recruitment carousel for JOB SEEKERS.. The renderer will supply 
-the common visual header, quick-info bar, and footer. You supply 
-concise card content only.
-
-SOURCE RULES
-The LOCKED_FACTS object is the ONLY source of truth. Never invent, infer,
-estimate, generalize, or silently change any fact. Do not use the source DOCX
-boilerplate when a verified fact is absent.
-
-ABSOLUTE OUTPUT CONTRACT
-You MUST return six fixed JSON properties: slide_1, slide_2, slide_3,
-slide_4, slide_5, slide_6. Their types are fixed by the JSON schema and MUST
-NOT be changed. Never return an array of arbitrary slide types.
-
-SLIDE 1 — title
-Include organisation/recruitment name, total vacancies, main posts, and the
-application deadline when verified.
-
-SLIDE 2 — vacancies
-Include EVERY verified post and its EXACT vacancy count, plus the total.
-Do not omit a post merely because the name is long.
-
-SLIDE 3 — eligibility
-Include the verified post-specific educational qualifications and computer,
-skill, language, or experience requirements. This is an Instagram slide, not
-the notification: give ONLY the essential qualification in a SHORT phrase for
-each post, ideally 1–2 lines. Remove legal boilerplate, institution-recognition boilerplate, document-verification wording, and repeated phrases while retaining
-material degree/discipline/computer/experience requirements. Do not omit a verified post.
-
-SLIDE 4 — age_pay_fee
-Include ONLY concise verified values: age range/maximum age and important
-relaxation note; pay level/basic pay/salary range; category-wise application fee.
-Do not repeat advertisement numbers, notification identifiers, source titles,
-or long explanatory paragraphs. Aim for short card-friendly phrases.
-
-SLIDE 5 — dates_selection
-Include application start/end and other verified dates, then the exact
-selection process. Include post-specific selection differences if verified.
-
-SLIDE 6 — apply_links
-Include verified how-to-apply instructions and important application notes.
-Do NOT print URLs or Markdown links. The application will attach structured
-official URLs and render QR codes separately.
-
-PRESENTATION RULES
-- This is a job post, not an audit report.
-- Never include PASS, FAIL, quality gate, validation, reconciliation, parsed
-  vacancies, authoritative vacancies, extraction repairs, source methods,
-  locked facts, facts_used, PDF extraction notes, or verification status in
-  headline/subtitle/bullets.
-- Do not duplicate the vacancy breakdown into slides 3–6.
-- Use human-readable dates such as "05 August 2026".
-- Never call a future deadline "ended" or "passed".
-- Never invent an application URL, salary, age, qualification, selection stage,
-  or category fee.
-- Avoid promotional filler such as "great opportunity" or "secure your future".
-- The facts_used field is audit-only and will not be rendered.
-
-Return JSON only.
-""".strip()
+        system = self._load_slide_prompt()
         user = {
-            "task": "Create the complete six-slide job post from LOCKED_FACTS. Follow the fixed slide contract exactly.",
+            "task": "Create exactly six concise Instagram recruitment slides from LOCKED_FACTS.",
             "slide_contract": {
-                "slide_1": "title",
-                "slide_2": "vacancies",
-                "slide_3": "eligibility",
-                "slide_4": "age_pay_fee",
-                "slide_5": "dates_selection",
-                "slide_6": "apply_links",
+                "1": "hero recruitment",
+                "2": "post-wise vacancies",
+                "3": "post-wise eligibility",
+                "4": "age + pay/salary + application fee",
+                "5": "important dates + selection process",
+                "6": "documents + how to apply + official links + deadline CTA",
             },
             "requirements": {
+                "exactly_six_slides": True,
                 "preserve_every_verified_post": True,
                 "preserve_exact_vacancy_numbers": True,
-                "include_eligibility": True,
-                "include_age_pay_fee": True,
-                "include_dates_and_selection": True,
-                "include_application_information": True,
-                "no_internal_audit_text": True,
+                "condense_long_qualifications": True,
+                "fit_content_for_instagram": True,
                 "no_raw_urls": True,
+                "no_internal_audit_text": True,
             },
             "LOCKED_FACTS": facts,
         }
@@ -203,61 +125,31 @@ Return JSON only.
             [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
             think=False, temperature=0.05, format_schema=schema,
         )
-        return self._fixed_plan_to_array(parse_json_content(data["message"]["content"]))
+        return self._fixed_six_slide_to_array(parse_json_content(data["message"]["content"]))
 
     def repair_slide_plan(self, facts: dict, previous_plan: dict, gate_errors: list[str], slide_count: int = 6) -> dict:
-        """Repair a failed plan using the same fixed positional schema.
-
-        V1.9.16 deliberately does not ask Qwen to choose slide types during
-        repair. The repair pass can only rewrite the content of each fixed slot.
-        """
         if slide_count != 6:
-            raise ValueError("V1.9.16 presentation mode requires exactly 6 slides")
+            raise ValueError("Presentation mode requires exactly 6 slides")
         schema = self._six_slide_schema()
-        system = """
-You are repairing a failed government-recruitment Instagram carousel.
-LOCKED_FACTS is the only source of truth. Return JSON only.
+        system = r"""
+Repair a six-slide government-recruitment Instagram presentation. LOCKED_FACTS is the only source of truth. Return JSON only.
 
-The six slide slots are FIXED and cannot be changed:
-slide_1 = title
-slide_2 = vacancies
-slide_3 = eligibility
-slide_4 = age_pay_fee
-slide_5 = dates_selection
-slide_6 = apply_links
+FIXED SLOTS:
+1 title = hero recruitment
+2 vacancies = every verified post + exact vacancy count
+3 eligibility = concise post-wise qualifications
+4 age_pay_fee = age + pay/salary + application fee
+5 dates_selection = dates + selection process
+6 apply_links = documents/instructions + official links + deadline CTA
 
-Rewrite the content so ALL listed gate errors are resolved.
-Do not create another vacancies slide. Do not omit any verified post.
-Do not omit available eligibility, age, pay, fee, dates, selection, or
-application information.
-Do not invent missing facts.
-Do not print raw URLs or Markdown links in slide text.
-Never expose audit/debug information such as PASS, FAIL, quality gate,
-verification status, parsed/authoritative vacancies, reconciliation,
-extraction repairs, facts_used, source methods, or PDF extraction notes.
-The facts_used field is audit-only.
-
-Content requirements:
-- slide_1: recruitment, organisation, total vacancies, deadline
-- slide_2: every post + exact vacancy + total
-- slide_3: every verified post + essential qualification only; concise 1–2 line summaries
-- slide_4: concise age + pay + fee values only; no advertisement/source boilerplate
-- slide_5: application dates + exact selection process
-- slide_6: how to apply + important instructions; URLs are attached separately
-
-Return the same six fixed JSON properties required by the schema.
+Resolve every gate error without inventing facts. Condense content rather than omitting verified posts or shrinking text. Remove source/audit/debug boilerplate. Never print raw URLs. Keep each bullet short and applicant-facing.
 """.strip()
-        user = {
-            "task": "Repair every gate error while preserving all verified facts.",
-            "gate_errors": gate_errors,
-            "previous_plan": previous_plan,
-            "LOCKED_FACTS": facts,
-        }
+        user = {"task": "Repair the six-slide plan for factual completeness and visual fit.", "gate_errors": gate_errors, "previous_plan": previous_plan, "LOCKED_FACTS": facts}
         data = self.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
             think=False, temperature=0.02, format_schema=schema,
         )
-        return self._fixed_plan_to_array(parse_json_content(data["message"]["content"]))
+        return self._fixed_six_slide_to_array(parse_json_content(data["message"]["content"]))
 
 def parse_json_content(content: str) -> dict:
     """Parse JSON even if a model accidentally surrounds it with markdown."""

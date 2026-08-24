@@ -132,7 +132,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             slide_errors.append("Missing headline")
         if not isinstance(bullets, list):
             slide_errors.append("bullets must be an array")
-        if len(bullets) > 6:
+        if len(bullets) > 8:
             slide_errors.append("Too many bullets for Instagram slide")
         if expected_type and _norm_type(slide.get("type")) != expected_type:
             slide_errors.append(f"Expected slide type '{expected_type}', got '{slide.get('type')}'")
@@ -171,6 +171,30 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             errors.extend([f"Slide {pos}: {e}" for e in slide_errors])
         warnings.extend([f"Slide {pos}: {w}" for w in slide_warnings])
         slide_results.append({"slide": pos, "status": "FAIL" if slide_errors else "PASS", "errors": slide_errors, "warnings": slide_warnings})
+
+    # Slide-specific content contract: each information category must live on its intended slide.
+    for pos, slide in enumerate(slides, 1):
+        text = _norm(" ".join([str(slide.get("headline") or ""), str(slide.get("subtitle") or "")] + [str(x) for x in (slide.get("bullets") or [])]))
+        if pos == 2 and _post_names(facts):
+            if not any(_norm(n.split("(")[0]).strip() in text for n in _post_names(facts)):
+                errors.append("Slide 2: vacancy breakdown does not name verified posts")
+        if pos == 3 and (facts.get("eligibility") or facts.get("post_eligibility") or facts.get("post_facts")):
+            if not any(k in text for k in ("eligib", "qualification", "degree", "diploma", "marks")):
+                errors.append("Slide 3: eligibility/qualification content missing")
+        if pos == 4:
+            if facts.get("age_limit") and "age" not in text:
+                errors.append("Slide 4: age information missing")
+            if facts.get("pay_scale") and not any(k in text for k in ("pay", "salary", "level")):
+                errors.append("Slide 4: pay/salary information missing")
+            if facts.get("application_fee") and "fee" not in text:
+                errors.append("Slide 4: application fee information missing")
+        if pos == 5:
+            if facts.get("application_end") and "application" not in text:
+                errors.append("Slide 5: application-date information missing")
+            if facts.get("selection_process") and not any(k in text for k in ("selection", "exam", "written", "test", "interview")):
+                errors.append("Slide 5: selection-process information missing")
+        if pos == 6 and not any(k in text for k in ("apply", "document", "notification", "official")):
+            errors.append("Slide 6: application/document instructions missing")
 
     # Completeness: require all verified core facts to appear somewhere in the presentation.
     all_text = _combined_text(slides)

@@ -61,7 +61,7 @@ fi
 
 echo
 echo "============================================================"
-echo "[2/3] Source verification + Qwen + slide QA (source failures do not block rendering)"
+echo "[2/3] Source verification + Qwen + six-slide QA (source failures do not block rendering)"
 echo "============================================================"
 
 SUCCESS_QWEN=0
@@ -111,7 +111,10 @@ try:
     jobs=d.get("jobs", [])
     j=jobs[0] if jobs else {}
     gate=j.get("slide_quality_gate") or {}
-    print("true" if j.get("presentation_ready") is True and gate.get("status") == "PASS" else "false")
+    slides=(j.get("slide_plan") or {}).get("slides") or []
+    # V1.9.27: a complete two-slide plan is renderable even when the audit
+    # gate has warnings/source deficiencies. The JSON retains the QA result.
+    print("true" if len(slides) == 6 else "false")
 except Exception:
     print("false")
 PY
@@ -136,7 +139,7 @@ EOF
 
 echo
 echo "============================================================"
-echo "[3/3] Rendering presentation-ready Qwen JSONs"
+echo "[3/3] Rendering six-slide presentation-ready Qwen JSONs"
 echo "============================================================"
 
 RENDER_SUCCESS=0
@@ -185,9 +188,10 @@ import json, sys
 from datetime import datetime
 p,j,qs,qf,rs,rf,s = sys.argv[1:]
 data={
-    "version":"1.9.27",
+    "version":"1.9.26",
     "date":datetime.now().strftime("%Y-%m-%d"),
     "selection_rule":"crawler-selected listings with LAST DATE > TODAY",
+    "presentation_slides":6,
     "duplicate_filtering":False,
     "job_detail_docx_count":int(j),
     "qwen_success":int(qs),

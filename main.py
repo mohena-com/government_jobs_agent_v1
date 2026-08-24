@@ -28,6 +28,7 @@ p.add_argument("--render-qwen", help="Render a Qwen JSON plan after it passes th
 p.add_argument("--render-output", default="social/rendered", help="Directory for rendered Qwen Instagram slides")
 p.add_argument("--published-today", action="store_true", help="Crawl only jobs whose Published/Updated date is today (IST)")
 p.add_argument("--batch-mode", action="store_true", help="Process one DOCX job without raising on a quality-gate failure; write the diagnostic JSON and return normally")
+p.add_argument("--qwen-prompt", default="prompts_instagram_v1.9.28.txt", help="Prompt file used by the local Qwen Instagram content planner")
 
 args = p.parse_args()
 
@@ -59,6 +60,7 @@ if args.docx:
         fail_on_quality_gate=not args.allow_qwen_on_failed_gate,
         verify_official=args.verify_official,
         batch_mode=args.batch_mode,
+        prompt_path=args.qwen_prompt,
     )
     print(f"DOCX: {args.docx}")
     print(f"Ollama: {args.ollama_host}")
