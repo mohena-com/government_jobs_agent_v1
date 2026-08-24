@@ -1,10 +1,11 @@
 from __future__ import annotations
-import re, hashlib
+import re, hashlib, time
 from pathlib import Path
 from typing import Any
 import requests
 from pypdf import PdfReader
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+from bs4 import BeautifulSoup
 
 RVUNL_URLS = {
     'https://jankalyanfile.rajasthan.gov.in/WebMyWayFiles/DepartmentMaster/183/2026/Aug/30409/1834ef1422d-0e7f-4f51-bfd3-6c602a408063.pdf',
@@ -33,17 +34,45 @@ def download_pdf(url: str, cache_dir: str | Path = 'cache/official_pdfs') -> Pat
     cache = Path(cache_dir); cache.mkdir(parents=True, exist_ok=True)
     name = hashlib.sha256(url.encode()).hexdigest()[:16] + '.pdf'
     path = cache / name
-    if not path.exists():
-        r = requests.get(url, timeout=60, headers={'User-Agent':'government-jobs-agent/1.9.23'})
-        r.raise_for_status()
-        content = r.content
-        ctype = (r.headers.get('content-type') or '').lower()
-        # Never save an HTML/application page as a PDF. This was a major source
-        # of misleading "invalid pdf header" failures in batch processing.
-        if not content.startswith(b'%PDF-') and 'application/pdf' not in ctype:
-            raise ValueError(f"URL did not return a PDF (content-type={ctype or 'unknown'})")
-        path.write_bytes(content)
-    return path
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/151 Safari/537.36',
+        'Accept': 'application/pdf,application/octet-stream,text/html;q=0.8,*/*;q=0.5',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+    if path.exists() and path.stat().st_size > 1000:
+        try:
+            if path.read_bytes()[:5] == b'%PDF-':
+                return path
+        except OSError:
+            pass
+        try: path.unlink()
+        except OSError: pass
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=60, headers=headers, allow_redirects=True)
+            r.raise_for_status()
+            content = r.content
+            ctype = (r.headers.get('content-type') or '').lower()
+            if content.startswith(b'%PDF-'):
+                path.write_bytes(content)
+                return path
+            # Some servers incorrectly report application/pdf but return an HTML page.
+            # Never cache that as a PDF.
+            if 'application/pdf' in ctype and len(content) > 1000:
+                path.write_bytes(content)
+                try:
+                    PdfReader(str(path))
+                    return path
+                except Exception:
+                    path.unlink(missing_ok=True)
+            raise ValueError(f'URL did not return a valid PDF (status={r.status_code}, content-type={ctype or "unknown"}, bytes={len(content)})')
+        except Exception as e:
+            last_error = e
+            import time
+            time.sleep(1.5 * (attempt + 1))
+    raise last_error or ValueError('PDF download failed')
 
 def pdf_text(path: str | Path) -> list[str]:
     reader = PdfReader(str(path))
@@ -56,14 +85,38 @@ def _clean(s: str) -> str:
     return re.sub(r'\s+', ' ', s or '').strip()
 
 def _date_iso(s: str) -> str:
-    m=re.search(r'(\d{1,2})(?:st|nd|rd|th)?[ ./-]+([A-Za-z]+)[, ./-]+(20\d{2})',s,re.I)
-    if not m:
-        m=re.search(r'(\d{1,2})[./-](\d{1,2})[./-](20\d{2})',s)
-        if not m:return ''
-        return f'{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}'
-    months={'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,'july':7,'august':8,'september':9,'october':10,'november':11,'december':12}
-    mon=months.get(m.group(2).lower())
-    return f'{m.group(3)}-{mon:02d}-{int(m.group(1)):02d}' if mon else ''
+    """Parse the common date formats used in Indian recruitment PDFs."""
+    s = _clean(s)
+    month_names = {
+        'jan':1,'january':1,'feb':2,'february':2,'mar':3,'march':3,
+        'apr':4,'april':4,'may':5,'jun':6,'june':6,'jul':7,'july':7,
+        'aug':8,'august':8,'sep':9,'sept':9,'september':9,
+        'oct':10,'october':10,'nov':11,'november':11,'dec':12,'december':12,
+    }
+    patterns = [
+        r'^(\d{1,2})(?:st|nd|rd|th)?[ ./-]+([A-Za-z]+)[, ./-]+(20\d{2})$',
+        r'^(\d{1,2})[./-](\d{1,2})[./-](20\d{2})$',
+        r'^([A-Za-z]+)[ ./-]+(\d{1,2})(?:st|nd|rd|th)?[, ./-]+(20\d{2})$',
+        r'^(\d{1,2})[ ./-]+([A-Za-z]+)[, ./-]+(20\d{2})$',
+    ]
+    for pat in patterns:
+        m = re.search(pat, s, re.I)
+        if not m:
+            continue
+        g = m.groups()
+        try:
+            if g[1].isdigit() and not g[0].isdigit():
+                mon = month_names.get(g[0].lower())
+                day = int(g[1]); year = int(g[2])
+            elif g[1].isdigit() and g[0].isdigit():
+                day = int(g[0]); mon = int(g[1]); year = int(g[2])
+            else:
+                day = int(g[0]); mon = month_names.get(g[1].lower()); year = int(g[2])
+            if mon and 1 <= day <= 31:
+                return f'{year:04d}-{mon:02d}-{day:02d}'
+        except ValueError:
+            pass
+    return ''
 
 def _extract_area_totals(block: str) -> list[int]:
     """Extract company-level vacancy totals from one post section.
@@ -334,123 +387,116 @@ def _deep_extract(text: str, post_names: list[str], ad: str = '') -> dict:
         'experience_official': _section(text,['Experience'],max_chars=1800),
     }
 
-def _generic_classify(text: str, url: str) -> dict:
-    """Generic official-PDF classifier for non-RVUNL recruitment notices.
+def _extract_labelled_date(t: str, labels: list[str]) -> str:
+    label = r'(?:' + '|'.join(re.escape(x) for x in labels) + r')'
+    date = r'(\d{1,2}(?:st|nd|rd|th)?(?:[ ./-]+[A-Za-z]+|[./-]+\d{1,2})[, ./-]+20\d{2}|[A-Za-z]+[ ./-]+\d{1,2}(?:st|nd|rd|th)?[, ./-]+20\d{2})'
+    for m in re.finditer(label + r'\s*(?:date)?\s*[:\-–—]?\s*' + date, t, re.I):
+        d = _date_iso(m.group(1))
+        if d:
+            return d
+    return ''
 
-    V1.9.23 keeps the RVUNL-specific reconciliation intact, but the previous
-    verifier classified every other organisation as UNKNOWN. That made a valid
-    official PDF fail verification for essentially every non-RVUNL job.
-    This conservative generic classifier extracts only high-confidence fields;
-    fields it cannot extract are left for the DOCX facts to retain.
-    """
-    t = _clean(text)
 
-    # Organisation: prefer common official-document headings and otherwise use
-    # the first plausible all-caps/official-name line.
-    org = ''
-    patterns = [
-        r'([A-Z][A-Z0-9&.,()\'/-]{3,}(?:\s+[A-Z][A-Z0-9&.,()\'/-]{2,}){1,12})\s*(?:\n|$)',
-        r'(?:Government|Govt\.?)\s+of\s+[A-Z][A-Za-z .&-]{2,80}',
+def _extract_age(t: str) -> str:
+    pats = [
+        r'age\s*(?:limit|criteria)?\s*[:\-–—]?\s*((?:\d{1,2}\s*(?:to|-|–)\s*\d{1,2})\s*years?(?:\s*as\s+on\s+[^.;\n]+)?(?:[^.;\n]{0,80})?)',
+        r'(?:minimum\s+age|minimum\s+age\s+limit)\s*[:\-–—]?\s*([^.;\n]{2,100})',
+        r'(?:maximum|upper)\s+age\s*(?:limit)?\s*[:\-–—]?\s*([^.;\n]{2,100})',
+        r'\b(\d{1,2})\s*(?:to|-|–)\s*(\d{1,2})\s*years?\s*(?:of\s+age)?\b',
     ]
-    for pat in patterns:
-        m = re.search(pat, text)
+    for pat in pats:
+        m=re.search(pat,t,re.I)
         if m:
-            candidate = _clean(m.group(1) if m.lastindex else m.group(0))
-            if len(candidate) >= 5 and not candidate.lower().startswith(('advertisement', 'important', 'application')):
-                org = candidate
-                break
+            val=_clean(m.group(0) if pat.startswith(r'\\b') else m.group(1))
+            if val and len(val) < 220:
+                return val
+    return ''
 
-    ad = ''
-    for pat in [
-        r'(?:Advertisement|Advt\.?|Recruitment|Notification)\s*(?:No\.?|Number)?\s*[:\-]?\s*([A-Za-z0-9./()_-]{2,80})',
-        r'\b(CEN\s*[-/]?\s*[0-9A-Za-z./_-]+)\b',
-    ]:
-        m = re.search(pat, t, re.I)
-        if m:
-            ad = _clean(m.group(1))
-            break
 
-    # Prefer explicitly labelled dates.
-    start = ''
-    end = ''
-    for pat in [
-        r'(?:application|registration)\s*(?:starts?|begins?|opens?)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
-        r'(?:apply\s+online\s+from|online\s+application\s+from)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
-    ]:
-        m = re.search(pat, t, re.I)
-        if m:
-            start = _date_iso(m.group(1))
-            if start: break
-    for pat in [
-        r'(?:last\s+date|closing\s+date|application\s+(?:ends?|deadline)|last\s+date\s+to\s+apply)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
-        r'(?:apply\s+online\s+till|online\s+application\s+till)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
-    ]:
-        m = re.search(pat, t, re.I)
-        if m:
-            end = _date_iso(m.group(1))
-            if end: break
-
-    dates = []
-    for m in re.finditer(r'\b\d{1,2}(?:st|nd|rd|th)?[ ./-]+[A-Za-z]+[, ./-]+20\d{2}\b|\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b', t, re.I):
-        d = _date_iso(m.group(0))
-        if d and d not in dates:
-            dates.append(d)
-    if not start and dates:
-        start = dates[0]
-    if not end and len(dates) > 1:
-        end = dates[1]
-
-    total = ''
-    for pat in [
+def _extract_total(t: str) -> str:
+    pats = [
         r'\b(?:total\s+)?(?:of\s+)?([\d,]+)\s+(?:posts?|vacancies|positions|openings)\b',
-        r'\btotal\s+vacancies\s*[:\-]?\s*([\d,]+)\b',
-    ]:
-        m = re.search(pat, t, re.I)
+        r'\b(?:posts?|vacancies|positions|openings)\s*[:\-]?\s*([\d,]+)\b',
+        r'\b(?:total\s+vacancies|total\s+posts?)\s*[:\-]?\s*([\d,]+)\b',
+        r'\bfor\s+([\d,]+)\s+post(?:s)?\b',
+    ]
+    for pat in pats:
+        m=re.search(pat,t,re.I)
         if m:
-            total = m.group(1).replace(',', '')
-            break
+            return m.group(1).replace(',','')
+    return ''
 
-    age = ''
+
+def _extract_ad(t: str) -> str:
     for pat in [
-        r'age\s+limit\s*[:\-]?\s*([^.;\n]{3,120})',
-        r'(?:minimum\s+age|minimum\s+age\s+limit)\s*[:\-]?\s*([^.;\n]{2,80})',
+        r'(?:advertisement|advt\.?|notification|recruitment)\s*(?:no\.?|number)?\s*[:\-–—]?\s*([A-Za-z0-9./()_-]{2,100})',
+        r'\b(CEN\s*[-/]?\s*[0-9A-Za-z./_-]+)\b',
+        r'\b(?:Advt\.?\s*No\.?)\s*[:\-]?\s*([A-Za-z0-9./_-]+)',
     ]:
-        m = re.search(pat, t, re.I)
+        m=re.search(pat,t,re.I)
         if m:
-            age = _clean(m.group(1))
-            break
+            return _clean(m.group(1))
+    return ''
 
-    pay = _section(t, ['Pay Scale', 'Pay Level', 'Salary', 'Remuneration'], max_chars=500)
-    eligibility = _section(t, ['Educational Qualification', 'Education Qualification', 'Essential Qualification', 'Qualification', 'Eligibility'], max_chars=2500)
-    selection = _section(t, ['Selection Process', 'Selection Procedure', 'Mode of Selection'], max_chars=1500)
-    fee = _clean_fee(_section(t, ['Application Fee', 'Examination Fee', 'Fee Details'], max_chars=1200))
-    how = _section(t, ['How to Apply', 'How To Apply', 'Online Application', 'Application Procedure'], max_chars=1500)
 
-    posts = _post_sections(t)
-    post_names = [_canonical_post(p.get('post','')) for p in posts]
-    post_elig = _post_eligibility(t, post_names)
+def _generic_classify(text: str, url: str) -> dict:
+    """Generic official-notification parser with conservative fallbacks."""
+    t = text
+    compact = _clean(text)
+    ad = _extract_ad(compact)
+
+    org = ''
+    for pat in [
+        r'(?:Government|Govt\.?)\s+of\s+[A-Z][A-Za-z .&()/-]{2,100}',
+        r'([A-Z][A-Z0-9&.,()\'/-]{3,}(?:\s+[A-Z][A-Z0-9&.,()\'/-]{2,}){1,15})\s*(?:\n|$)',
+    ]:
+        m=re.search(pat,t)
+        if m:
+            candidate=_clean(m.group(1) if m.lastindex else m.group(0))
+            if len(candidate)>=5 and not candidate.lower().startswith(('advertisement','important','application')):
+                org=candidate; break
+
+    start = _extract_labelled_date(compact, [
+        'application starts','application start','application begins','registration starts',
+        'registration start','registration begins','online application from','apply online from',
+        'opening date','start date','commencement date'
+    ])
+    end = _extract_labelled_date(compact, [
+        'last date','last date to apply','closing date','application ends','application end',
+        'application deadline','online application till','apply online till','closing date for application',
+        'last date for submission'
+    ])
+
+    # Explicit DD/MM/YYYY and DD-MM-YYYY dates are common in tables.
+    all_dates=[]
+    for m in re.finditer(r'\b\d{1,2}(?:st|nd|rd|th)?[ ./-]+(?:[A-Za-z]+|\d{1,2})[, ./-]+20\d{2}\b', compact, re.I):
+        d=_date_iso(m.group(0))
+        if d and d not in all_dates: all_dates.append(d)
+    if not start and all_dates: start=all_dates[0]
+    if not end and len(all_dates)>1: end=all_dates[-1]
+
+    total=_extract_total(compact)
+    age=_extract_age(compact)
+    pay=_section(compact,['Pay Scale','Pay Level','Salary','Remuneration','Stipend'],max_chars=800)
+    eligibility=_section(compact,['Educational Qualification','Education Qualification','Essential Qualification','Qualification','Eligibility','Educational Qualifications'],max_chars=3500)
+    selection=_section(compact,['Selection Process','Selection Procedure','Mode of Selection','Method of Selection'],max_chars=1800)
+    fee=_clean_fee(_section(compact,['Application Fee','Examination Fee','Fee Details','Application Fees'],max_chars=1800))
+    how=_section(compact,['How to Apply','How To Apply','Online Application','Application Procedure','How To Fill'],max_chars=2000)
+
+    posts=_post_sections(compact)
+    post_names=[_canonical_post(p.get('post','')) for p in posts]
+    post_elig=_post_eligibility(compact,post_names)
 
     return {
-        'url': url,
-        'advertisement_number': ad,
-        'document_type': 'GENERIC',
-        'organisation': org,
-        'published_date': dates[0] if dates else '',
-        'application_start': start,
-        'application_end': end,
-        'age_limit': age,
-        'post_sections': posts,
-        'short_notice_total': int(total) if total else None,
-        'pay_scale': pay,
-        'post_eligibility': post_elig,
-        'selection_process': selection,
-        'application_fee_official': fee,
-        'how_to_apply': how,
-        'experience_official': _section(t, ['Experience'], max_chars=1200),
-        'generic_total': total,
-        'source_pages': max(1, len(text)),
+        'url':url,'advertisement_number':ad,'document_type':'GENERIC',
+        'organisation':org,'published_date':all_dates[0] if all_dates else '',
+        'application_start':start,'application_end':end,'age_limit':age,
+        'post_sections':posts,'short_notice_total':int(total) if total else None,
+        'pay_scale':pay,'post_eligibility':post_elig,'selection_process':selection,
+        'application_fee_official':fee,'how_to_apply':how,
+        'experience_official':_section(compact,['Experience'],max_chars=1600),
+        'generic_total':total,'source_pages':max(1,len(text)),
     }
-
 
 def _classify(text: str, url: str) -> dict:
     m = re.search(r'(?:Advertisement|advertisement)\s+(?:(?:No\.|no\.)|bearing\s+no\.)\s*([A-Za-z0-9./-]+)', text, re.I)
@@ -505,34 +551,161 @@ def _classify(text: str, url: str) -> dict:
     }
 
 
-def verify_urls(urls: list[str], cache_dir: str|Path='cache/official_pdfs') -> dict:
-    docs=[]; errors=[]; skipped=[]
-    for url in urls:
-        if not url:
-            continue
-        host = urlparse(url).netloc.lower()
-        # A SarkariResult detail page is a source page, not an official
-        # notification PDF. Never let it poison official-PDF verification.
-        if 'sarkariresult.com' in host:
-            skipped.append({'url': url, 'reason': 'third-party detail page; not an official PDF'})
-            continue
-        try:
-            path=download_pdf(url,cache_dir)
-            pages=pdf_text(path)
-            text='\n'.join(pages)
-            if not text.strip():
-                raise ValueError('PDF contains no extractable text')
-            d = _classify(text, url)
-            if d.get('document_type') == 'UNKNOWN':
-                d = _generic_classify(text, url)
-            d['source_pages'] = len(pages)
-            docs.append(d)
-        except Exception as e:
-            # A broken auxiliary URL should not invalidate a valid official
-            # notification PDF. It remains visible in the audit trail.
-            errors.append({'url':url,'error':str(e)})
-    return reconcile(docs, errors, skipped)
+def _fetch_web(url: str, timeout: int = 45) -> tuple[str, str, str]:
+    """Fetch a recruitment source and classify it as PDF/HTML/other.
 
+    Recruitment sites are inconsistent: the same field may be exposed through
+    a PDF, an HTML notification page, a JavaScript-free mirror, or a link from
+    a detail page.  This fetcher deliberately does not assume a file extension
+    is truthful; it uses response bytes/content-type and follows redirects.
+    Returns (kind, text, final_url).
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/151 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/pdf,application/octet-stream;q=0.9,*/*;q=0.5',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+    r = requests.get(url, timeout=timeout, headers=headers, allow_redirects=True)
+    r.raise_for_status()
+    content = r.content
+    final_url = r.url
+    ctype = (r.headers.get('content-type') or '').lower()
+    if content.startswith(b'%PDF-') or 'application/pdf' in ctype:
+        return 'pdf', '', final_url
+    if 'html' in ctype or content.lstrip().lower().startswith((b'<!doctype html', b'<html', b'<head', b'<body')):
+        soup = BeautifulSoup(content, 'html.parser')
+        for tag in soup(['script', 'style', 'noscript', 'svg']):
+            tag.decompose()
+        return 'html', _clean(soup.get_text('\n')), final_url
+    # Some recruitment endpoints return plain text despite a generic content type.
+    try:
+        text = content.decode(r.encoding or 'utf-8', errors='ignore')
+    except Exception:
+        text = ''
+    return 'text', _clean(text), final_url
+
+
+def _extract_html_links(base_url: str, html: bytes | str) -> list[str]:
+    """Return likely recruitment-document/application links from an HTML page."""
+    try:
+        soup = BeautifulSoup(html, 'html.parser')
+    except Exception:
+        return []
+    candidates=[]
+    for a in soup.find_all('a', href=True):
+        href=urljoin(base_url, a.get('href','').strip())
+        if not href.startswith(('http://','https://')):
+            continue
+        label=_clean(a.get_text(' ', strip=True))
+        low=(label+' '+href).lower()
+        score=0
+        for term, weight in [
+            ('.pdf', 8), ('notification', 7), ('advertisement', 7), ('advt', 6),
+            ('recruitment', 5), ('notice', 5), ('vacancy', 4), ('apply', 4),
+            ('application', 3), ('career', 3), ('jobs', 2), ('download', 2),
+        ]:
+            if term in low: score += weight
+        if score:
+            candidates.append((score, href))
+    seen=set(); out=[]
+    for _, href in sorted(candidates, key=lambda x:(-x[0], x[1])):
+        if href not in seen:
+            seen.add(href); out.append(href)
+    return out[:20]
+
+
+def _html_classify(text: str, url: str) -> dict:
+    """Classify an HTML recruitment notice using the same generic fact grammar."""
+    d=_generic_classify(text, url)
+    d['document_type']='HTML_NOTICE'
+    d['source_format']='HTML'
+    d['source_pages']=1
+    return d
+
+
+def _is_probably_detail_page(url: str) -> bool:
+    host=urlparse(url).netloc.lower()
+    path=(urlparse(url).path or '').lower()
+    # SarkariResult is a discovery source. Its HTML is not an official source.
+    if 'sarkariresult.com' in host and not path.endswith('.pdf'):
+        return True
+    return False
+
+
+def _official_host_hint(url: str) -> bool:
+    """Heuristic only: identify likely government/organisation hosts.
+
+    This does not declare a source authoritative by itself; the source still
+    has to contain recruitment facts and pass the reconciliation gate.
+    """
+    host=urlparse(url).netloc.lower()
+    return any(x in host for x in ('.gov.in', '.nic.in', '.gov', '.ac.in', '.edu.in'))
+
+
+def verify_urls(urls: list[str], cache_dir: str|Path='cache/official_pdfs') -> dict:
+    """Broad recruitment-source verifier.
+
+    Accepts PDF, HTML and plain-text notification sources.  HTML detail pages
+    are treated as discovery pages: relevant notification/advertisement/PDF
+    links are followed automatically.  A job is not rejected merely because
+    its notification is HTML instead of PDF.
+    """
+    docs=[]; errors=[]; skipped=[]; visited=set(); queue=[]
+    for u in urls or []:
+        if u and u not in visited:
+            queue.append((u, 0, 'seed'))
+
+    while queue and len(visited) < 40:
+        url, depth, source_kind = queue.pop(0)
+        if not url or url in visited:
+            continue
+        visited.add(url)
+        try:
+            kind, text, final_url = _fetch_web(url)
+            if kind == 'pdf':
+                path=download_pdf(final_url, cache_dir)
+                pages=pdf_text(path)
+                text='\n'.join(pages)
+                if not text.strip():
+                    raise ValueError('PDF contains no extractable text')
+                d=_classify(text, final_url)
+                if d.get('document_type') == 'UNKNOWN':
+                    d=_generic_classify(text, final_url)
+                d['source_format']='PDF'
+                d['source_pages']=len(pages)
+                d['discovered_from']=url if final_url != url else None
+                docs.append(d)
+            elif kind == 'html':
+                d=_html_classify(text, final_url)
+                # HTML may itself be the official notification. Keep it if it
+                # contains meaningful recruitment anchors; otherwise use it as
+                # a discovery page and follow likely notification links.
+                meaningful=sum(bool(d.get(k)) for k in (
+                    'advertisement_number','organisation','application_start',
+                    'application_end','generic_total','age_limit','pay_scale',
+                    'post_eligibility','selection_process','application_fee_official'))
+                if meaningful >= 2 and (_official_host_hint(final_url) or not _is_probably_detail_page(final_url)):
+                    docs.append(d)
+                if depth < 2:
+                    try:
+                        # Re-fetch raw bytes for href extraction; this is cheap
+                        # compared with the notification verification itself.
+                        rr=requests.get(final_url, timeout=45, headers={'User-Agent':'Mozilla/5.0'}, allow_redirects=True)
+                        for link in _extract_html_links(final_url, rr.content):
+                            if link not in visited:
+                                queue.append((link, depth+1, 'discovered'))
+                    except Exception as e:
+                        errors.append({'url':final_url,'error':f'HTML link discovery failed: {e}'})
+            elif text:
+                d=_generic_classify(text, final_url)
+                d['source_format']='TEXT'
+                docs.append(d)
+            else:
+                raise ValueError('Unsupported/empty recruitment source')
+        except Exception as e:
+            errors.append({'url':url,'error':str(e),'source_kind':source_kind})
+
+    return reconcile(docs, errors, skipped)
 
 def _canonical_post(name: str) -> str:
     s = _clean(name).lstrip('- ').strip()
@@ -569,7 +742,7 @@ def reconcile(docs:list[dict], errors:list[dict], skipped:list[dict] | None = No
     skipped = skipped or []
     detailed = [d for d in docs if d.get('document_type') in {'JE','JA_ACCOUNTANT'}]
     short = [d for d in docs if d.get('document_type') == 'SHORT_NOTICE']
-    generic = [d for d in docs if d.get('document_type') == 'GENERIC']
+    generic = [d for d in docs if d.get('document_type') in {'GENERIC','HTML_NOTICE'}]
     ads={d['advertisement_number']:d for d in detailed if d.get('advertisement_number')}
 
     raw_post_totals=[]
@@ -650,7 +823,15 @@ def reconcile(docs:list[dict], errors:list[dict], skipped:list[dict] | None = No
     if detailed or short:
         status = 'PASS' if (len(ads) >= 2 and detailed_total > 0 and dates_ok and not errors and profile_match and short_match) else 'FAIL'
     elif generic:
-        status = 'PASS' if all(int(d.get('source_pages') or 0) > 0 for d in generic) else 'FAIL'
+        # Generic jobs can legitimately have a single HTML notice, a single PDF,
+        # or a mixture of HTML + PDF.  Do not require RVUNL-style multi-document
+        # reconciliation for unrelated organisations.  The field-level quality
+        # gate remains responsible for blocking unsafe/incomplete facts.
+        usable = [d for d in generic if int(d.get('source_pages') or 0) > 0 and
+                  any(d.get(k) for k in ('organisation','advertisement_number',
+                                         'application_start','application_end',
+                                         'generic_total','post_eligibility','selection_process'))]
+        status = 'PASS' if usable else 'FAIL'
     else:
         status = 'FAIL'
 

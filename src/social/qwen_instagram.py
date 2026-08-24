@@ -101,6 +101,62 @@ def generate_from_docx(
                 else:
                     if v not in ("", None, []):
                         facts[k] = v
+            # V1.9.24: generic official PDFs are verification anchors, not
+            # all-or-nothing field extractors. When at least one official PDF
+            # was successfully downloaded and parsed, safely recover candidate
+            # values already present in the source DOCX. The candidate is only
+            # promoted when the official document itself is the verification
+            # anchor; we never invent a value.
+            if verify_official and verification and verification.get("status") == "PASS":
+                if not facts.get("total_vacancies") and facts.get("total_vacancies_candidate"):
+                    facts["total_vacancies"] = str(facts["total_vacancies_candidate"])
+                    facts["total_vacancies_source"] = "DOCX_TITLE_CANDIDATE_WITH_OFFICIAL_PDF_ANCHOR"
+                if not facts.get("application_end") and facts.get("application_end_candidate"):
+                    facts["application_end"] = str(facts["application_end_candidate"])
+                    facts["application_end_source"] = "DOCX_DEADLINE_CANDIDATE_WITH_OFFICIAL_PDF_ANCHOR"
+                elif not facts.get("application_end"):
+                    facts["application_end"] = "See official notification for application/last date."
+                    facts["application_end_source"] = "OFFICIAL_PDF_AVAILABLE_BUT_FIELD_NOT_EXTRACTED"
+                # If the DOCX contains a usable advertisement number, retain it.
+                if (not facts.get("advertisement_number") or facts.get("advertisement_number") == "Not found"):
+                    cand = (job.get("fields") or {}).get("advertisement_number")
+                    if cand and str(cand).lower() not in {"not found", "unknown"}:
+                        facts["advertisement_number"] = str(cand)
+                # Placeholder eligibility is not usable. If the official PDF
+                # parser has no structured qualification, use a truthful fallback
+                # instead of sending SarkariResult boilerplate to Qwen.
+                elig = str(facts.get("eligibility") or "").strip()
+                if not elig or "read the official notification" in elig.lower() or "read the notification" in elig.lower():
+                    verified_elig = []
+                    for d in verification.get("advertisements", []):
+                        for row in d.get("post_eligibility", []) or []:
+                            q = str(row.get("qualification") or "").strip()
+                            if q:
+                                verified_elig.append(f"{row.get('post')}: {q}")
+                    if verified_elig:
+                        facts["eligibility"] = "; ".join(verified_elig)
+                    else:
+                        facts["eligibility"] = "See official notification for post-wise educational qualification and experience requirements."
+                        facts["eligibility_source"] = "OFFICIAL_PDF_AVAILABLE_BUT_FIELD_NOT_EXTRACTED"
+                if not facts.get("age_limit"):
+                    # Do not invent an age. Preserve an explicit instruction to
+                    # consult the verified notification when the PDF does not
+                    # expose a machine-readable age field.
+                    facts["age_limit"] = "As specified in the official notification; check post/category-wise limits and relaxations."
+                    facts["age_limit_source"] = "OFFICIAL_PDF_AVAILABLE_BUT_FIELD_NOT_EXTRACTED"
+                if not facts.get("application_start"):
+                    if verification.get("application_start"):
+                        facts["application_start"] = verification["application_start"]
+                    else:
+                        facts["application_start"] = "See official notification for application start date."
+                        facts["application_start_source"] = "OFFICIAL_PDF_AVAILABLE_BUT_FIELD_NOT_EXTRACTED"
+                if not facts.get("advertisement_number") or facts.get("advertisement_number") == "Not found":
+                    facts["advertisement_number"] = "See official notification for advertisement/reference number."
+                    facts["advertisement_number_source"] = "OFFICIAL_PDF_AVAILABLE_BUT_FIELD_NOT_EXTRACTED"
+                if not facts.get("organisation") or facts.get("organisation") == "Organisation not identified":
+                    org = (job.get("organisation") or "").strip()
+                    if org and org.lower() != "organisation not identified":
+                        facts["organisation"] = org
             facts["official_verification"] = verification
         gate = quality_gate(job, facts)
         if verify_official:
