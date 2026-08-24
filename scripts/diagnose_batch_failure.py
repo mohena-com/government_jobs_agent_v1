@@ -1,14 +1,41 @@
+#!/usr/bin/env python3
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else "social/qwen_test")
-for p in sorted(root.glob("job_*/qwen_instagram_plans.json")):
-    d = json.loads(p.read_text(encoding="utf-8"))
-    for j in d.get("jobs", []):
-        print(f"{p.parent.name}: action={j.get('action')} ready={j.get('presentation_ready')}")
-        print("  source_gate:", (j.get("quality_gate") or {}).get("status"))
-        print("  source_errors:", (j.get("quality_gate") or {}).get("errors"))
-        print("  slide_gate:", (j.get("slide_quality_gate") or {}).get("status"))
-        print("  slide_errors:", (j.get("slide_quality_gate") or {}).get("errors"))
-        print("  warnings:", j.get("validation_warnings"))
+
+if not root.exists():
+    print(f"ERROR: {root} does not exist")
+    raise SystemExit(1)
+
+plans = sorted(root.glob("job_*/qwen_instagram_plans.json"))
+
+if not plans:
+    print(f"No Qwen JSON files found under {root}")
+    raise SystemExit(1)
+
+for p in plans:
+    print("\n" + "=" * 70)
+    print(p)
+
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        print("JSON ERROR:", e)
+        continue
+
+    for job in data.get("jobs", []):
+        source = job.get("quality_gate") or {}
+        slide = job.get("slide_quality_gate") or {}
+
+        print("ACTION:", job.get("action"))
+        print("PRESENTATION READY:", job.get("presentation_ready"))
+        print("SOURCE GATE:", source.get("status"))
+        print("SOURCE ERRORS:", source.get("errors", []))
+        print("SLIDE GATE:", slide.get("status"))
+        print("SLIDE ERRORS:", slide.get("errors", []))
+        print("SLIDE WARNINGS:", slide.get("warnings", []))
+        print("VALIDATION WARNINGS:", job.get("validation_warnings", []))
+        print("PRESENTATION FALLBACKS:", job.get("presentation_fallbacks", {}))
+        print("SLIDES:", len((job.get("slide_plan") or {}).get("slides", [])))

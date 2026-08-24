@@ -17,7 +17,6 @@ echo "[1] Generate Job Detail DOCX files"
 
 "$PYTHON_BIN" main.py --max-jobs "$JOB_COUNT" || exit 1
 
-# Select exactly the newest JOB_COUNT job DOCX files. Each DOCX is a single-job document.
 DOCX_LIST="$(ls -t reports/jobs/*.docx 2>/dev/null | grep -v 'Summary.docx' | head -n "$JOB_COUNT")"
 
 if [ -z "$DOCX_LIST" ]; then
@@ -48,6 +47,7 @@ while IFS= read -r DOCX; do
 
     JOB_DIR="social/qwen_test/job_${INDEX}"
     RENDER_DIR="social/rendered_test/job_${INDEX}"
+
     mkdir -p "$JOB_DIR" "$RENDER_DIR"
 
     echo
@@ -72,6 +72,7 @@ while IFS= read -r DOCX; do
     fi
 
     PLAN="${JOB_DIR}/qwen_instagram_plans.json"
+
     if [ ! -f "$PLAN" ]; then
         echo "ERROR: Qwen JSON was not created for job ${INDEX}."
         FAILED=$((FAILED + 1))
@@ -91,12 +92,14 @@ while IFS= read -r DOCX; do
 
     COUNT="$(find "$RENDER_DIR" -type f -name '*.png' | wc -l | tr -d ' ')"
     echo "Rendered slides for job ${INDEX}: ${COUNT}"
-    TOTAL_PNG=$((TOTAL_PNG + COUNT))
 
+    TOTAL_PNG=$((TOTAL_PNG + COUNT))
     INDEX=$((INDEX + 1))
 done <<EOF
 $DOCX_LIST
 EOF
+
+chmod -R 777 social/qwen_test social/rendered_test 2>/dev/null || true
 
 echo
 echo "=============================================="
@@ -113,6 +116,7 @@ if [ "$FAILED" -gt 0 ]; then
 fi
 
 EXPECTED_PNG=$((JOB_COUNT * 6))
+
 if [ "$TOTAL_PNG" -lt "$EXPECTED_PNG" ]; then
     echo "WARNING: Expected at least ${EXPECTED_PNG} PNGs but found ${TOTAL_PNG}."
     exit 1

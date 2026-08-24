@@ -1,4 +1,18 @@
 from __future__ import annotations
+PRESENTATION_FALLBACKS = {
+    "total_vacancies": "See Official Notification",
+    "eligibility": "Refer to Official Notification",
+    "age_limit": "Refer to Official Notification",
+    "pay_scale": "See Official Notification",
+    "application_fee": "See Official Notification",
+    "selection_process": "See Official Notification",
+}
+
+def _presentation_fallback(field):
+    """Return safe copy when a source field is unavailable.
+    Never invent a factual value.
+    """
+    return PRESENTATION_FALLBACKS.get(field, "See Official Notification")
 
 import json
 from pathlib import Path
@@ -9,6 +23,7 @@ from src.llm.ollama_client import OllamaClient
 from src.llm.validator import validate_slide_plan
 from src.llm.slide_quality_gate import slide_quality_gate
 from src.llm.presentation_sanitizer import sanitize_slide_plan
+from src.llm.allowed_facts import build_allowed_facts, fatal_generation_errors
 from src.verify_official import verify_urls, apply_to_job
 
 
@@ -39,6 +54,16 @@ def _attach_verified_links(plan: dict, facts: dict) -> dict:
         slides[-1]["link_note"] = "Scan a QR code for the official notification/application link."
     return plan
 
+
+def _prepare_presentation_facts(locked_facts):
+    """Build a complete presentation bundle without fabricating facts."""
+    facts = dict(locked_facts or {})
+    fallbacks = {}
+    for field, fallback in PRESENTATION_FALLBACKS.items():
+        value = facts.get(field)
+        if value in (None, "", [], {}, "N/A", "NA", "Unknown", "unknown"):
+            fallbacks[field] = fallback
+    return facts, fallbacks
 
 def generate_from_docx(
     docx_path: str | Path,
@@ -171,52 +196,51 @@ def generate_from_docx(
                 gate["status"] = "FAIL" if gate.get("errors") else "WARN"
             elif verification and verification.get("status") == "PASS":
                 gate["status"] = "PASS" if not gate.get("errors") else "FAIL"
-        any_failed = any_failed or gate["status"] == "FAIL"
+        presentation_facts, presentation_fallbacks = build_allowed_facts(facts)
+        fatal_errors = fatal_generation_errors(gate)
+        any_failed = any_failed or bool(fatal_errors)
 
         record = {
             "job_index": idx,
             "source_job": job,
             "locked_facts": facts,
+            "presentation_facts": presentation_facts,
+            "presentation_fallbacks": presentation_fallbacks,
             "quality_gate": gate,
+            "fatal_generation_errors": fatal_errors,
             "official_verification": verification,
         }
 
-        # V1.9.26: source QA and presentation QA are separate layers.
-        # In batch/presentation mode a source-quality failure is recorded in
-        # the audit metadata but does not prevent Qwen from producing a
-        # source-constrained presentation. Qwen receives only LOCKED_FACTS and
-        # the slide gate still rejects invented/unsupported content.
+        # V1.9.29: verification-to-generation decoupling. Missing/unreadable
+        # fields are presentation fallbacks; only direct factual contradictions
+        # are generation blockers. Source QA remains fully auditable.
         source_gate_failed = gate["status"] in {"FAIL", "WARN"}
-        presentation_mode = batch_mode or not fail_on_quality_gate
 
         if quality_gate_only:
             record["slide_plan"] = None
             record["validation_warnings"] = []
-            if source_gate_failed:
-                record["action"] = "BLOCKED: source quality gate only"
-        elif source_gate_failed and not presentation_mode:
+            record["action"] = "SOURCE_QA_ONLY"
+        elif fatal_errors and not batch_mode and fail_on_quality_gate:
             record["slide_plan"] = None
             record["validation_warnings"] = []
-            record["action"] = "BLOCKED: fix source extraction before sending facts to Qwen"
+            record["action"] = "BLOCKED: fatal factual reconciliation conflict"
         else:
             attempts = []
-            raw_plan = client.generate_slide_plan(facts, slide_count=slide_count)
+            raw_plan = client.generate_slide_plan(presentation_facts, slide_count=slide_count)
             plan = sanitize_slide_plan(raw_plan)
             plan = _attach_verified_links(plan, facts)
-            warnings = validate_slide_plan(plan, facts)
-            slide_gate = slide_quality_gate(plan, facts)
+            warnings = validate_slide_plan(plan, presentation_facts)
+            slide_gate = slide_quality_gate(plan, presentation_facts)
             attempts.append({"attempt": 1, "gate": slide_gate, "plan": plan})
 
-            # V1.9.15: automatically repair a failed Qwen plan once using the
-            # exact deterministic gate errors. Never manually override facts.
             if slide_gate["status"] == "FAIL":
                 repaired_raw = client.repair_slide_plan(
-                    facts, plan, slide_gate.get("errors", []), slide_count=slide_count
+                    presentation_facts, plan, slide_gate.get("errors", []), slide_count=slide_count
                 )
                 repaired = sanitize_slide_plan(repaired_raw)
                 repaired = _attach_verified_links(repaired, facts)
-                repaired_warnings = validate_slide_plan(repaired, facts)
-                repaired_gate = slide_quality_gate(repaired, facts)
+                repaired_warnings = validate_slide_plan(repaired, presentation_facts)
+                repaired_gate = slide_quality_gate(repaired, presentation_facts)
                 attempts.append({"attempt": 2, "gate": repaired_gate, "plan": repaired})
                 if repaired_gate["status"] == "PASS":
                     raw_plan = repaired_raw
@@ -237,11 +261,11 @@ def generate_from_docx(
                 record["action"] = "BLOCKED: slide-level quality gate failed after automatic repair"
                 record["presentation_ready"] = False
                 any_failed = True
-            elif source_gate_failed:
+            elif source_gate_failed or presentation_fallbacks:
                 record["action"] = (
-                    "QWEN_GENERATED_WITH_SOURCE_WARNINGS_AND_SLIDE_GATE_PASSED"
+                    "QWEN_GENERATED_WITH_FALLBACKS_AND_SOURCE_WARNINGS_AND_SLIDE_GATE_PASSED"
                     if len(attempts) == 1
-                    else "QWEN_GENERATED_AFTER_AUTOMATIC_REPAIR_WITH_SOURCE_WARNINGS_AND_SLIDE_GATE_PASSED"
+                    else "QWEN_GENERATED_AFTER_AUTOMATIC_REPAIR_WITH_FALLBACKS_AND_SOURCE_WARNINGS_AND_SLIDE_GATE_PASSED"
                 )
                 record["presentation_ready"] = True
             elif len(attempts) > 1:
@@ -275,7 +299,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.28", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.29", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -283,6 +307,10 @@ def generate_from_docx(
     # In diagnostic/quality-gate-only mode, return the report normally so callers
     # can inspect the exact extraction and verification failures.
     if fail_on_quality_gate and any_failed and not quality_gate_only and not batch_mode:
-        raise RuntimeError("Quality gate failed. Review qwen output JSON; Qwen generation was blocked for failed jobs.")
+        raise RuntimeError("Fatal factual reconciliation conflict. Review qwen output JSON; Qwen generation was blocked.")
 
     return summary_path, generated
+
+
+# V1.9.32 prompt policy
+'\nPRESENTATION COMPLETENESS POLICY:\n- Never invent missing recruitment facts.\n- Never leave a required presentation section blank.\n- If a factual field is unavailable, use the supplied presentation fallback,\n  such as "See Official Notification" or "Refer to Official Notification".\n- Compress long content to fit the slide; prioritize the most decision-useful facts.\n- A slide may omit secondary detail only when the omitted detail is safely covered\n  by a concise fallback or "See Official Notification".\n- Generic design CTAs such as "APPLY NOW", "CHECK DETAILS", and "READ NOTIFICATION"\n  are presentation copy, not factual claims.\n'
