@@ -281,18 +281,15 @@ def _compact_pay(text: str) -> str:
     if not s:
         return "See official notification."
     parts = []
-    for value in re.findall(r"(?:Pay\s*Level|Level)[-:\s]*([0-9]+)", s, re.I):
-        label = f"Level-{value}"
-        if label not in parts:
-            parts.append(label)
-    for pat in [r"Basic(?: Pay)?\s*[:\-]?\s*(?:₹\s*)?[\d,]+(?:\s*[–-]\s*(?:₹\s*)?[\d,]+)?", r"₹\s*[\d,]+(?:\s*[–-]\s*₹\s*[\d,]+)?(?:\s*(?:per month|/month))?"]:
-        for m in re.finditer(pat, s, re.I):
+    for pat in [r"Pay\s*Level\s*[-:]?\s*([0-9]+)", r"Level[-:]?\s*([0-9]+)", r"Basic(?: Pay)?\s*[:\-]?\s*(?:₹\s*)?[\d,]+(?:\s*[–-]\s*(?:₹\s*)?[\d,]+)?", r"₹\s*[\d,]+(?:\s*[–-]\s*₹\s*[\d,]+)?(?:\s*(?:per month|/month))?"]:
+        m = re.search(pat, s, re.I)
+        if m:
             value = m.group(0).strip()
             if value not in parts:
                 parts.append(value)
     if parts:
-        return " • ".join(parts[:3])
-    return _compact_qualification(s, 100)
+        return " • ".join(parts[:2])
+    return _compact_qualification(s, 80)
 
 
 def _compact_fee(text: str) -> str:
@@ -613,174 +610,11 @@ def _draw_apply_links(img, draw, slide, facts, number, total):
     _footer(draw, "SCAN THE OFFICIAL SOURCE • DO NOT RELY ON THIRD-PARTY LINKS")
 
 
-
-def _common_two_slide_header(draw, facts, number, total, section):
-    """Identical masthead + quick-info strip for both two-slide layouts."""
-    org = _clean(facts.get("organisation"))
-    _header(None, draw, org, number, total, "GOVERNMENT RECRUITMENT")
-    # Main recruitment line.
-    title = _clean(facts.get("post") or "RECRUITMENT 2026")
-    draw.text((55, 145), "RECRUITMENT", font=F_TITLE, fill=NAVY)
-    # Highlighted compact designation line.
-    rows = _vacancies(facts)
-    names = [p for p, _ in rows]
-    if names:
-        sub = " • ".join(names[:3]) + (f" • +{len(names)-3} more" if len(names) > 3 else "")
-    else:
-        sub = title
-    _text(draw, sub, 55, 205, F_H2, DARK, 700, 5, 2)
-    total_v = _clean(facts.get("total_vacancies") or facts.get("combined_vacancies"))
-    _card(draw, 790, 142, 235, 120, NAVY, NAVY, 18, 2)
-    draw.text((810, 160), "TOTAL VACANCIES", font=F_TINY_B, fill=(214, 228, 245))
-    draw.text((810, 190), total_v or "Not specified", font=F_H2, fill=YELLOW)
-    # Quick-info bar.
-    y = 285
-    _card(draw, 35, y, 1010, 88, WHITE, BORDER, 16, 2)
-    facts4 = [
-        ("LOCATION", _first(facts.get("job_location"), facts.get("location"), "Not specified"), BLUE),
-        ("ORGANISATION", _short_org(org) or "Not specified", BLUE),
-        ("APP START", _date_label(facts.get("application_start")) or "Not specified", GREEN),
-        ("APP END", _date_label(facts.get("application_end")) or "Not specified", RED),
-    ]
-    widths = [245, 245, 245, 245]
-    x = 45
-    for i, (label, value, accent) in enumerate(facts4):
-        if i:
-            draw.line((x, y + 13, x, y + 75), fill=LIGHT_LINE, width=2)
-        draw.text((x + 14, y + 13), label, font=F_TINY_B, fill=accent)
-        _text(draw, value, x + 14, y + 40, F_SMALL_B, DARK, widths[i] - 28, 3, 2)
-        x += widths[i]
-    draw.text((55, 390), section, font=F_H1, fill=NAVY)
-
-
-def _draw_two_job_details(img, draw, slide, facts, number, total):
-    _common_two_slide_header(draw, facts, number, total, "JOB DETAILS")
-    rows = _vacancies(facts)
-    elig = _eligibility_rows(facts)
-    ordered = []
-    for post, count in rows:
-        match = next((r for r in elig if _post_match(post, r.get("post", ""))), None)
-        ordered.append((post, count, (match or {}).get("qualification", ""), (match or {}).get("experience", "")))
-    if not ordered:
-        for r in elig:
-            ordered.append((r.get("post", "Qualification"), "", r.get("qualification", ""), r.get("experience", "")))
-    # Vacancy + qualification grid.
-    x, y, w = 45, 425, 990
-    _card(draw, x, y, w, 62, NAVY, NAVY, 14, 1)
-    draw.text((70, y + 22), "POST", font=F_TINY_B, fill=WHITE)
-    draw.text((275, y + 22), "VACANCY", font=F_TINY_B, fill=WHITE)
-    draw.text((365, y + 22), "ESSENTIAL QUALIFICATION", font=F_TINY_B, fill=WHITE)
-    y += 68
-    max_rows = min(len(ordered), 7)
-    row_h = 84 if max_rows <= 5 else 76
-    for i, (post, count, qual, exp) in enumerate(ordered[:max_rows]):
-        fill = WHITE if i % 2 == 0 else PALE_BLUE
-        _card(draw, x, y, w, row_h, fill, BORDER, 12, 1)
-        _text(draw, post, x + 18, y + 13, F_SMALL_B, NAVY, 185, 3, 2)
-        draw.text((300, y + 25), count or "—", font=F_H2, fill=RED, anchor="mm")
-        q = _compact_qualification(qual or "Refer to Official Notification", 285)
-        _text(draw, q, x + 320, y + 10, F_TINY if len(q) > 150 else F_SMALL, DARK, 640, 3, 3)
-        y += row_h + 7
-    if len(ordered) > max_rows:
-        _pill(draw, f"+{len(ordered)-max_rows} more verified posts • SEE NOTIFICATION FOR FULL POST-WISE DETAILS", 55, y + 2, PALE_YELLOW, NAVY)
-        y += 48
-    # Age + selection compact bottom row.
-    bottom = min(y + 12, 1030)
-    card_h = 170
-    left_w = 465
-    _card(draw, 45, bottom, left_w, card_h, PALE_BLUE, BORDER, 18, 2)
-    draw.text((70, bottom + 18), "AGE LIMIT", font=F_SMALL_B, fill=BLUE)
-    _text(draw, _compact_age(facts.get("age_limit")), 70, bottom + 52, F_H2, DARK, 410, 4, 2)
-    _text(draw, "Relaxation: as specified in the official notification.", 70, bottom + 100, F_SMALL, MUTED, 410, 3, 2)
-    _card(draw, 535, bottom, 500, card_h, WHITE, BORDER, 18, 2)
-    draw.text((560, bottom + 18), "SELECTION PROCESS", font=F_SMALL_B, fill=GREEN)
-    selection = _clean(facts.get("selection_process")) or "Refer to Official Notification"
-    _text(draw, _compact_qualification(selection, 210), 560, bottom + 52, F_BODY_B if len(selection) < 100 else F_SMALL, DARK, 450, 4, 4)
-    _footer(draw)
-
-
-def _draw_two_at_a_glance(img, draw, slide, facts, number, total):
-    _common_two_slide_header(draw, facts, number, total, "AT A GLANCE")
-    age = _compact_age(facts.get("age_limit"))
-    pay = _compact_pay(facts.get("pay_scale") or facts.get("salary"))
-    fee = _compact_fee(facts.get("application_fee"))
-    _stat_card(draw, 45, 425, 305, 165, "AGE LIMIT", age, BLUE, PALE_BLUE, "A")
-    _stat_card(draw, 387, 425, 305, 165, "PAY / SALARY", pay, GREEN, PALE_GREEN, "₹")
-    _stat_card(draw, 729, 425, 306, 165, "APPLICATION FEE", fee, RED, PALE_RED, "₹")
-
-    # Dates card.
-    _card(draw, 45, 615, 470, 430, WHITE, BORDER, 20, 2)
-    draw.text((70, 645), "IMPORTANT DATES", font=F_H2, fill=NAVY)
-    dates = [
-        ("Notification", _date_label(facts.get("published_date"))),
-        ("Application Start", _date_label(facts.get("application_start"))),
-        ("Application Deadline", _date_label(facts.get("application_end"))),
-    ]
-    extra = facts.get("important_dates")
-    if isinstance(extra, list):
-        for item in extra:
-            if isinstance(item, dict):
-                label = _clean(item.get("label") or item.get("name"))
-                value = _date_label(item.get("date") or item.get("value"))
-                if label and value and not any(label.lower() == d[0].lower() for d in dates):
-                    dates.append((label, value))
-    yy = 705
-    for label, value in dates[:5]:
-        draw.ellipse((75, yy + 7, 87, yy + 19), fill=BLUE)
-        draw.text((105, yy), label, font=F_SMALL_B, fill=NAVY)
-        _text(draw, value or "Refer to Official Notification", 105, yy + 30, F_SMALL, DARK, 360, 3, 2)
-        yy += 82
-
-    # Documents/instructions card.
-    _card(draw, 545, 615, 490, 430, WHITE, BORDER, 20, 2)
-    draw.text((570, 645), "DOCUMENTS / HOW TO APPLY", font=F_H2, fill=NAVY)
-    bullets = _slide_bullets(slide)
-    # Keep only short applicant-facing instructions; avoid duplicated audit/source text.
-    cleaned = []
-    for b in bullets:
-        low = b.lower()
-        if any(k in low for k in ("quality gate", "validation", "parsed vacancies", "authoritative vacancies", "pdf extraction")):
-            continue
-        if not any(k in low for k in ("document", "photo", "signature", "id proof", "certificate", "marksheet", "apply", "application", "submit", "read the official", "notification", "keep required", "experience", "eligibility")):
-            continue
-        b = _compact_qualification(b, 130)
-        if b and b not in cleaned:
-            cleaned.append(b)
-    if not cleaned:
-        cleaned = ["Keep required documents ready.", "Check post-wise eligibility and experience.", "Submit the online application within the given dates."]
-    _draw_bullets(draw, cleaned[:6], 575, 705, 425, 1010, GREEN, 6, F_SMALL)
-
-    # Official source CTA: structured links are shown as short labels/QRs, never raw URLs.
-    links = [x for x in (slide.get("links") or facts.get("official_links") or []) if isinstance(x, dict) and x.get("url")]
-    unique, seen = [], set()
-    for link in links:
-        url = str(link.get("url")).strip()
-        if url and url not in seen:
-            seen.add(url)
-            unique.append({"label": _clean(link.get("label") or "Official Source"), "url": url})
-    if unique and qrcode is not None:
-        qr = _make_qr(unique[0]["url"], 125)
-        if qr:
-            img.paste(qr, (565, 900))
-        draw.text((710, 910), "OFFICIAL SOURCE", font=F_SMALL_B, fill=BLUE)
-        draw.text((710, 945), _domain(unique[0]["url"]), font=F_SMALL_B, fill=DARK)
-        draw.text((710, 978), "SCAN TO OPEN", font=F_TINY_B, fill=MUTED)
-
-    deadline = _date_label(facts.get("application_end")) or "the deadline"
-    _card(draw, 45, 1070, 990, 115, NAVY, NAVY, 18, 2)
-    draw.text((75, 1092), "APPLY ONLINE ONLY THROUGH THE OFFICIAL WEBSITE", font=F_SMALL_B, fill=YELLOW)
-    _text(draw, f"Before {deadline}", 75, 1128, F_H2, WHITE, 880, 4, 1)
-    _footer(draw)
-
 def render_slide(slide: dict[str, Any], facts: dict, number: int, total: int, path: Path):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
     slide_type = str(slide.get("type") or "").lower()
-    if slide_type == "job_details":
-        _draw_two_job_details(img, draw, slide, facts, number, total)
-    elif slide_type == "at_a_glance":
-        _draw_two_at_a_glance(img, draw, slide, facts, number, total)
-    elif slide_type == "title":
+    if slide_type == "title":
         _draw_title(img, draw, slide, facts, number, total)
     elif slide_type == "vacancies":
         _draw_vacancies(img, draw, slide, facts, number, total)
@@ -814,13 +648,11 @@ def render_qwen_plan(plan_path: str | Path, output_dir: str | Path, job_index: i
     for job in data.get("jobs", []):
         if job_index is not None and job.get("job_index") != job_index:
             continue
-        # V1.9.26: rendering is a separate delivery layer. A job may have
-        # source/slide QA warnings and still be renderable when it has a
-        # complete two-slide plan. The QA result remains in the JSON audit;
-        # rendering must not silently discard the job.
+        if job.get("presentation_ready") is False:
+            continue
         plan = job.get("slide_plan") or {}
         slides = plan.get("slides") or []
-        if not slides or len(slides) != 2:
+        if not slides:
             continue
         facts = job.get("locked_facts") or {}
         organisation = _clean(facts.get("organisation"))
