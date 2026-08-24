@@ -15,6 +15,7 @@ def _presentation_fallback(field):
     return PRESENTATION_FALLBACKS.get(field, "See Official Notification")
 
 import json
+import re
 from pathlib import Path
 
 from src.docx.reader import read_docx, to_locked_facts
@@ -175,83 +176,157 @@ def _bind_canonical_application_dates(facts: dict, job: dict, verification: dict
     return facts
 
 
-def _normalize_application_date_claims(plan: dict, facts: dict) -> dict:
-    """V1.9.35: replace explicit application-date claims with canonical values.
+def _format_date_pair(start: str, end: str) -> str:
+    if start and end:
+        return f"Application: {start} → {end}"
+    if end:
+        return f"Application Deadline: {end}"
+    if start:
+        return f"Application Start: {start}"
+    return "Application Dates: Refer to Official Notification"
 
-    This keeps Qwen creative while making application start/end deterministic.
-    Fee-payment, exam, notification and admit-card dates are untouched.
+
+def _normalize_application_date_claims(plan: dict, facts: dict) -> dict:
+    """V1.9.36: deterministically rewrite application-date claims.
+
+    Qwen may put an application window inside ordinary prose (for example,
+    'the link remains active from 31.08.2026 to 26.09.2026').  Replacing only
+    labelled bullets is insufficient.  We therefore rewrite dates only when
+    the surrounding text is semantically about applying/opening/deadline.
+    Fee-payment, exam, notification and admit-card dates are left untouched.
     """
-    if not isinstance(plan, dict):
-        return plan
-    slides = plan.get("slides")
-    if not isinstance(slides, list):
+    if not isinstance(plan, dict) or not isinstance(plan.get("slides"), list):
         return plan
 
     start = str(facts.get("application_start") or "").strip()
     end = str(facts.get("application_end") or "").strip()
-    fallback = str((facts.get("presentation_fallbacks") or {}).get("application_start") or "Refer to Official Notification")
+    if not (start or end):
+        return plan
 
-    def replace_bullet(value: str) -> str:
+    date_pattern = re.compile(
+        r"(?<!\d)(?:\d{1,2}[/-]\d{1,2}[/-]20\d{2}|20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})(?!\d)",
+        re.I,
+    )
+    app_context = re.compile(
+        r"(application|apply|applying|opens?|opening|deadline|last\s+date|closing\s+date|online\s+form|link\s+(?:shall\s+)?remains?\s+active)",
+        re.I,
+    )
+
+    def replace_text(value: str) -> str:
         text = str(value or "")
         low = text.lower()
-        if not any(k in low for k in ("application start", "application opens", "application opening", "application deadline", "application end", "last date to apply")):
+        if not app_context.search(text):
             return text
-        if start and end:
-            if any(k in low for k in ("application start", "application opens", "application opening")):
-                return f"Application Start: {start}"
-            return f"Application Deadline: {end}"
-        return f"Application Dates: {fallback}"
 
-    for slide in slides:
+        # Explicit semantic labels always win.
+        if re.search(r"application\s+(?:start|opens?|opening)", low):
+            return re.sub(date_pattern, start or end or "Refer to Official Notification", text, count=0) if not end else re.sub(date_pattern, start, text, count=1)
+        if re.search(r"application\s+(?:deadline|end)|last\s+date\s+to\s+apply|closing\s+date", low):
+            return re.sub(date_pattern, end or start or "Refer to Official Notification", text, count=1)
+
+        matches = list(date_pattern.finditer(text))
+        if len(matches) >= 2 and start and end:
+            # Application-window prose: replace the two dates in order.
+            pieces=[]; last=0
+            for i,m in enumerate(matches):
+                pieces.append(text[last:m.start()])
+                pieces.append(start if i == 0 else end if i == 1 else m.group(0))
+                last=m.end()
+            pieces.append(text[last:])
+            return "".join(pieces)
+        if matches and end:
+            # Single application/deadline date in prose -> canonical end.
+            m=matches[0]
+            return text[:m.start()] + end + text[m.end():]
+        return text
+
+    for slide in plan["slides"]:
         if not isinstance(slide, dict):
             continue
+        if isinstance(slide.get("headline"), str):
+            slide["headline"] = replace_text(slide["headline"])
+        if isinstance(slide.get("subtitle"), str):
+            slide["subtitle"] = replace_text(slide["subtitle"])
         if isinstance(slide.get("bullets"), list):
-            slide["bullets"] = [replace_bullet(x) for x in slide["bullets"]]
-    plan["slides"] = slides
+            slide["bullets"] = [replace_text(x) for x in slide["bullets"]]
     return plan
 
-def _enforce_application_dates_on_plan(plan: dict, facts: dict) -> dict:
-    """V1.9.33 hotfix: deterministically keep slide 5 date content bound to facts.
 
-    Qwen remains responsible for design/copy, but application dates are safety-
-    critical structured facts. If slide 5 omits them, add one compact bullet; if
-    facts are unavailable, add the controlled fallback instead of inventing dates.
+def _compact_fact_text(value: str, max_chars: int = 180) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars].rsplit(" ", 1)[0].strip()
+    return cut + "…"
+
+
+def _enforce_presentation_contract(plan: dict, facts: dict) -> dict:
+    """V1.9.36: final deterministic completeness pass before QA.
+
+    Missing presentation coverage is repaired with source-backed compact facts
+    or the configured fallback. This is deliberately after Qwen + repair so a
+    single model omission cannot block an otherwise safe presentation.
     """
-    if not isinstance(plan, dict):
+    if not isinstance(plan, dict) or not isinstance(plan.get("slides"), list):
         return plan
-    slides = plan.get("slides")
-    if not isinstance(slides, list) or not slides:
-        return plan
-    target = slides[4] if len(slides) >= 5 and isinstance(slides[4], dict) else None
-    if target is None:
-        return plan
+    slides=plan["slides"]
+    while len(slides) < 6:
+        slides.append({"type": ["title","vacancies","eligibility","age_pay_fee","dates_selection","apply_links"][len(slides)], "headline":"", "subtitle":"", "bullets":[]})
 
-    bullets = target.get("bullets")
-    if not isinstance(bullets, list):
-        bullets = []
+    def text_of(slide):
+        return " ".join([str(slide.get("headline") or ""), str(slide.get("subtitle") or "")] + [str(x) for x in (slide.get("bullets") or [])]).lower()
 
-    text = " ".join([str(target.get("headline") or ""), str(target.get("subtitle") or "")] + [str(x) for x in bullets])
-    low = text.lower()
+    # Slide 3: verified eligibility must be represented, but keep it compact.
+    s3=slides[2]; t3=text_of(s3)
+    elig=str(facts.get("eligibility") or "").strip()
+    rows=facts.get("post_eligibility") or facts.get("post_facts") or []
+    s3_body=" ".join([str(s3.get("subtitle") or "")] + [str(x) for x in (s3.get("bullets") or [])]).lower()
+    if elig and not any(k in s3_body for k in ("eligib", "qualification", "degree", "diploma", "marks")):
+        compact=[]
+        for row in rows[:4]:
+            if isinstance(row, dict):
+                q=str(row.get("qualification") or row.get("eligibility") or "").strip()
+                post=str(row.get("post") or "").strip()
+                if q:
+                    compact.append(f"{post}: {_compact_fact_text(q, 155)}" if post else _compact_fact_text(q, 175))
+        if not compact:
+            compact=[f"Qualification: {_compact_fact_text(elig, 180)}"]
+        s3["bullets"] = list(s3.get("bullets") or []) + compact[:3]
 
-    start = str(facts.get("application_start") or "").strip()
-    end = str(facts.get("application_end") or "").strip()
+    # Slide 4: verified age/pay/fee coverage.
+    s4=slides[3]; t4=text_of(s4); b4=list(s4.get("bullets") or [])
+    for field,label,keys in (("age_limit","Age",("age",)), ("pay_scale","Pay / Salary",("pay","salary","level")), ("application_fee","Application Fee",("fee",))):
+        val=str(facts.get(field) or "").strip()
+        if val and not any(k in t4 for k in keys):
+            b4.append(f"{label}: {_compact_fact_text(val, 150)}")
+    s4["bullets"]=b4[:8]
 
-    def present(value: str) -> bool:
-        if not value:
-            return False
-        return value.lower() in low or value.replace(" ", "").lower() in low.replace(" ", "")
+    # Slide 5: canonical dates and selection.
+    s5=slides[4]; t5=text_of(s5); b5=list(s5.get("bullets") or [])
+    start=str(facts.get("application_start") or "").strip(); end=str(facts.get("application_end") or "").strip()
+    if start and end and not (start.lower() in t5 and end.lower() in t5):
+        b5.append(f"Application: {start} → {end}")
+    elif not start and not end and "official notification" not in t5:
+        b5.append("Application Dates: Refer to Official Notification")
+    sel=str(facts.get("selection_process") or "").strip()
+    if sel and not any(k in t5 for k in ("selection","exam","written","test","interview")):
+        b5.append(f"Selection: {_compact_fact_text(sel, 180)}")
+    s5["bullets"]=b5[:8]
 
-    if start and end:
-        if not (present(start) and present(end)):
-            bullets.append(f"Application: {start} → {end}")
-    elif not start and not end:
-        fallback = str((facts.get("presentation_fallbacks") or {}).get("application_start") or "Refer to Official Notification")
-        if "refer to official notification" not in low and "see official notification" not in low:
-            bullets.append(f"Application dates: {fallback}")
+    # Slide 6: generic CTA is presentation copy, but ensure the slide has a
+    # factual instruction even if Qwen omitted it.
+    s6=slides[5]; t6=text_of(s6); b6=list(s6.get("bullets") or [])
+    if not any(k in t6 for k in ("apply","application","notification","official","document")):
+        b6.append("Read the Official Notification before applying.")
+    s6["bullets"]=b6[:8]
 
-    target["bullets"] = bullets[:8]
-    plan["slides"] = slides
+    plan["slides"]=slides[:6]
     return _normalize_application_date_claims(plan, facts)
+
+
+def _enforce_application_dates_on_plan(plan: dict, facts: dict) -> dict:
+    """Backward-compatible wrapper for the final deterministic presentation pass."""
+    return _enforce_presentation_contract(plan, facts)
 
 def generate_from_docx(
     docx_path: str | Path,

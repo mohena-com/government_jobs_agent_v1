@@ -31,3 +31,19 @@ def test_wrong_application_date_fails_slide_gate():
     result = slide_quality_gate({"slides": slides}, facts)
     assert result["status"] == "FAIL"
     assert any("not supported by locked application dates" in x for x in result["errors"])
+
+
+def test_v1935_canonical_dates_override_contaminated_verifier():
+    from src.social.qwen_instagram import _bind_canonical_application_dates
+    path = "/mnt/data/00d62238-b8b6-46e1-b0b6-9c9054a0ad13.docx"
+    job = read_docx(path)["jobs"][0]
+    facts = to_locked_facts(job)
+    facts["application_start"] = "06 August 2026"
+    facts["application_end"] = "27 July 2007"
+    bound = _bind_canonical_application_dates(
+        facts, job,
+        {"application_start": "06 August 2026", "application_end": "27 July 2007"},
+    )
+    assert bound["application_start"] == "28 July 2026"
+    assert bound["application_end"] == "27 August 2026"
+    assert bound["application_dates_canonical"]["source"] == "DOCX_SEMANTIC_EVIDENCE"

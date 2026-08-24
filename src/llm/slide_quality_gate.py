@@ -18,7 +18,6 @@ CONDITIONAL_CLAIMS = {
     "document verification": "document verification",
     "typing test": "typing",
     "final selection is based on": "selection_process",
-    "apply now": "application status",
     "application is live": "application status",
     "recruitment is live": "application status",
     "don't miss out": "application status",
@@ -264,7 +263,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
                 errors.append(f"Completeness: verified post missing from presentation: {post}")
 
     if facts.get("eligibility") or facts.get("post_eligibility") or facts.get("post_facts"):
-        if not any(k in all_text for k in ("eligib", "qualification", "degree", "diploma", "secondary")):
+        if not any(k in all_text for k in ("eligib", "qualification", "degree", "diploma", "secondary", "official notification")):
             errors.append("Completeness: eligibility/qualification information missing")
 
     if facts.get("age_limit"):
@@ -280,7 +279,11 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             errors.append("Completeness: application-fee information missing")
 
     if facts.get("application_start") and facts.get("application_end"):
-        if not ("application" in all_text and ("august" in all_text or "january" in all_text or "february" in all_text or "march" in all_text or "april" in all_text or "may" in all_text or "june" in all_text or "july" in all_text or "september" in all_text or "october" in all_text or "november" in all_text or "december" in all_text)):
+        allowed_dates = _application_date_set(facts)
+        generated_dates = set()
+        for raw in re.findall(r"(?<!\d)(?:\d{1,2}[/-]\d{1,2}[/-]20\d{2}|20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})(?!\d)", all_text, re.I):
+            generated_dates.update(_date_tokens_for_qa(raw))
+        if not ("application" in all_text and allowed_dates.issubset(generated_dates)):
             errors.append("Completeness: application dates missing")
 
     if facts.get("selection_process") and "selection" not in all_text and "exam" not in all_text and "written" not in all_text:
