@@ -1,6 +1,6 @@
-# V1.9.36 — Canonical Presentation Contract Hotfix
+# V1.9.37 — Canonical Presentation Contract Hotfix
 
-This release addresses the regressions exposed by the first V1.9.35 three-job run.
+This release addresses the regressions exposed by the first V1.9.37 three-job run.
 
 ## Fixes
 

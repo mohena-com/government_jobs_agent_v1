@@ -125,7 +125,7 @@ def _crosscheck_application_dates(facts: dict, job: dict) -> dict:
 
 
 def _bind_canonical_application_dates(facts: dict, job: dict, verification: dict | None = None) -> dict:
-    """V1.9.35: create one canonical application-date fact pair.
+    """V1.9.37: create one canonical application-date fact pair.
 
     Priority is deliberately deterministic:
       1. semantic dates recovered from the Job Detail DOCX
@@ -187,7 +187,7 @@ def _format_date_pair(start: str, end: str) -> str:
 
 
 def _normalize_application_date_claims(plan: dict, facts: dict) -> dict:
-    """V1.9.36: deterministically rewrite application-date claims.
+    """V1.9.37: deterministically rewrite application-date claims.
 
     Qwen may put an application window inside ordinary prose (for example,
     'the link remains active from 31.08.2026 to 26.09.2026').  Replacing only
@@ -260,8 +260,67 @@ def _compact_fact_text(value: str, max_chars: int = 180) -> str:
     return cut + "…"
 
 
+
+def _suppress_unavailable_field_content(plan: dict, facts: dict) -> dict:
+    """V1.9.37: remove labels/values for fields absent from canonical facts.
+
+    Qwen is allowed to design around available facts, but it must not keep a
+    label with a placeholder when the underlying fact does not exist.
+    """
+    if not isinstance(plan, dict) or not isinstance(plan.get("slides"), list):
+        return plan
+
+    availability = {
+        "total_vacancies": bool(str(facts.get("total_vacancies") or facts.get("combined_vacancies") or "").strip()
+                                 and str(facts.get("total_vacancies") or facts.get("combined_vacancies") or "").strip().lower() not in {"not found", "unknown"}),
+        "age_limit": bool(str(facts.get("age_limit") or "").strip()),
+        "pay_scale": bool(str(facts.get("pay_scale") or facts.get("salary") or "").strip()),
+        "application_fee": bool(str(facts.get("application_fee") or "").strip()),
+        "application_start": bool(str(facts.get("application_start") or "").strip()),
+        "application_end": bool(str(facts.get("application_end") or "").strip()),
+        "eligibility": bool(str(facts.get("eligibility") or "").strip()) or bool(facts.get("post_eligibility") or facts.get("post_facts")),
+        "selection_process": bool(str(facts.get("selection_process") or "").strip()),
+    }
+
+    field_patterns = {
+        "total_vacancies": re.compile(r"\\b(total\\s+vacancies?|vacancies?\\s*:)\\b", re.I),
+        "age_limit": re.compile(r"\\b(age\\s+limit|maximum\\s+age|minimum\\s+age)\\b", re.I),
+        "pay_scale": re.compile(r"\\b(pay\\s*(?:scale)?|salary|stipend|remuneration)\\b", re.I),
+        "application_fee": re.compile(r"\\b(application\\s+fee|fee\\s*(?:is|:)?)\\b", re.I),
+        "application_start": re.compile(r"\\b(application\\s+(?:start|opens?|opening))\\b", re.I),
+        "application_end": re.compile(r"\\b(application\\s+(?:deadline|end)|last\\s+date\\s+to\\s+apply|closing\\s+date)\\b", re.I),
+        "eligibility": re.compile(r"\\b(eligib(?:ility|le)|qualification|educational\\s+qualification)\\b", re.I),
+        "selection_process": re.compile(r"\\b(selection\\s+process|selection\\s+procedure)\\b", re.I),
+    }
+
+    # Never remove a line containing a canonical date merely because the
+    # generic field is absent; application dates are handled separately.
+    for slide in plan["slides"]:
+        if not isinstance(slide, dict):
+            continue
+        for field, present in availability.items():
+            if present:
+                continue
+            pat = field_patterns[field]
+            if isinstance(slide.get("bullets"), list):
+                kept = []
+                for item in slide["bullets"]:
+                    s = str(item or "")
+                    if pat.search(s):
+                        continue
+                    kept.append(item)
+                slide["bullets"] = kept
+            # Suppress an absent-field headline/subtitle only when it is
+            # clearly a standalone field label, not a general sentence.
+            for key in ("headline", "subtitle"):
+                val = str(slide.get(key) or "")
+                if val and pat.fullmatch(val.strip().rstrip(":")):
+                    slide[key] = ""
+
+    return plan
+
 def _enforce_presentation_contract(plan: dict, facts: dict) -> dict:
-    """V1.9.36: final deterministic completeness pass before QA.
+    """V1.9.37: final deterministic completeness pass before QA.
 
     Missing presentation coverage is repaired with source-backed compact facts
     or the configured fallback. This is deliberately after Qwen + repair so a
@@ -306,8 +365,9 @@ def _enforce_presentation_contract(plan: dict, facts: dict) -> dict:
     start=str(facts.get("application_start") or "").strip(); end=str(facts.get("application_end") or "").strip()
     if start and end and not (start.lower() in t5 and end.lower() in t5):
         b5.append(f"Application: {start} → {end}")
-    elif not start and not end and "official notification" not in t5:
-        b5.append("Application Dates: Refer to Official Notification")
+    # V1.9.37: if application dates are genuinely unavailable, suppress the
+    # label/value instead of inserting a filler that visually looks like a
+    # factual field. The slide can remain intentionally lighter.
     sel=str(facts.get("selection_process") or "").strip()
     if sel and not any(k in t5 for k in ("selection","exam","written","test","interview")):
         b5.append(f"Selection: {_compact_fact_text(sel, 180)}")
@@ -321,6 +381,7 @@ def _enforce_presentation_contract(plan: dict, facts: dict) -> dict:
     s6["bullets"]=b6[:8]
 
     plan["slides"]=slides[:6]
+    plan = _suppress_unavailable_field_content(plan, facts)
     return _normalize_application_date_claims(plan, facts)
 
 
@@ -448,7 +509,7 @@ def generate_from_docx(
                         facts["organisation"] = org
             facts["official_verification"] = verification
 
-        # V1.9.35: bind one canonical application-date pair AFTER official
+        # V1.9.37: bind one canonical application-date pair AFTER official
         # verification. This prevents generic verifier output from overwriting
         # dates already supported by the Job Detail DOCX.
         facts = _bind_canonical_application_dates(facts, job, verification)
@@ -580,7 +641,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.35", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.37", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

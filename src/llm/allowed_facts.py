@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 
 MISSING = {"", "not found", "unknown", "n/a", "na", "none", "null"}
@@ -34,6 +35,33 @@ def _missing(value: Any) -> bool:
     return str(value).strip().lower() in MISSING
 
 
+
+def _field_usable(field: str, value: Any) -> bool:
+    """V1.9.37: field-aware sanity check for presentation exposure."""
+    if value is None:
+        return False
+    s = str(value).strip()
+    low = s.lower()
+    if not s or low in MISSING or any(marker in low for marker in CONTAMINATED_MARKERS):
+        return False
+    if low in {"see official notification", "refer to official notification",
+               "not specified", "not available", "unknown"}:
+        return False
+
+    required = {
+        "age_limit": ("age", "year", "years", "month"),
+        "pay_scale": ("pay", "salary", "stipend", "remuneration", "basic", "level", "per month"),
+        "application_fee": ("fee", "₹", "rs", "inr"),
+        "eligibility": ("degree", "diploma", "qualification", "eligib", "marks", "experience", "graduate"),
+        "selection_process": ("selection", "exam", "test", "interview", "merit", "shortlist"),
+    }
+    keys = required.get(field)
+    if keys and not any(k in low for k in keys):
+        return False
+    if field in {"total_vacancies", "combined_vacancies"}:
+        return bool(re.search(r"\d", s))
+    return True
+
 def build_allowed_facts(facts: dict) -> tuple[dict, dict]:
     """Return presentation-safe facts and explicit fallbacks.
 
@@ -50,6 +78,12 @@ def build_allowed_facts(facts: dict) -> tuple[dict, dict]:
         if _missing(value) or any(marker in low for marker in CONTAMINATED_MARKERS):
             allowed[field] = ""
             fallbacks[field] = fallback
+
+    for field in ("total_vacancies", "combined_vacancies", "age_limit", "pay_scale",
+                  "application_fee", "eligibility", "selection_process"):
+        if field in allowed and not _field_usable(field, allowed.get(field)):
+            allowed[field] = ""
+            fallbacks[field] = FALLBACKS.get(field, "See Official Notification")
 
     for key in list(allowed):
         if key.endswith("_candidate") or key.endswith("_source"):

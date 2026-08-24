@@ -497,38 +497,74 @@ def _draw_eligibility(img, draw, slide, facts, number, total):
     _pill(draw, "ONLY ESSENTIAL REQUIREMENTS SHOWN • SEE NOTIFICATION FOR FULL CONDITIONS", 55, 1095, PALE_YELLOW, NAVY)
     _footer(draw)
 
+
+def _usable_render_fact(field: str, value) -> bool:
+    """V1.9.37: renderer-side field-aware suppression guard."""
+    s = str(value or "").strip()
+    low = s.lower()
+    if not s or low in {"not found", "unknown", "not specified", "not available",
+                        "see official notification", "refer to official notification"}:
+        return False
+    rules = {
+        "age_limit": ("age", "year", "years"),
+        "pay_scale": ("pay", "salary", "stipend", "remuneration", "basic", "level"),
+        "application_fee": ("fee", "₹", "rs", "inr"),
+    }
+    keys = rules.get(field)
+    return True if not keys else any(k in low for k in keys)
+
 def _draw_age_pay_fee(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
-    _header(img, draw, org, number, total, "AGE • PAY • APPLICATION FEE")
-    _section_bar(draw, "AT A GLANCE", 55, 145, 970, BLUE, "04")
-
+    available = []
     age = _compact_age(facts.get("age_limit"))
     pay = _compact_pay(facts.get("pay_scale") or facts.get("salary"))
     fee = _compact_fee(facts.get("application_fee"))
 
-    _stat_card(draw, 55, 225, 300, 220, "AGE LIMIT", age, BLUE, PALE_BLUE, "A")
-    _stat_card(draw, 390, 225, 300, 220, "PAY / SALARY", pay, GREEN, PALE_GREEN, "₹")
-    _stat_card(draw, 725, 225, 300, 220, "APPLICATION FEE", fee, RED, PALE_RED, "₹")
+    if _usable_render_fact("age_limit", facts.get("age_limit")):
+        available.append(("AGE LIMIT", age, BLUE, PALE_BLUE, "A"))
+    if _usable_render_fact("pay_scale", facts.get("pay_scale") or facts.get("salary")):
+        available.append(("PAY / SALARY", pay, GREEN, PALE_GREEN, "₹"))
+    if _usable_render_fact("application_fee", facts.get("application_fee")):
+        available.append(("APPLICATION FEE", fee, RED, PALE_RED, "₹"))
 
-    # Use the remaining space for only a few useful, compact conditions.
-    _card(draw, 55, 480, 970, 480, WHITE, BORDER, 24, 2)
-    draw.text((85, 515), "KEY CONDITIONS", font=F_H2, fill=NAVY)
+    labels = " • ".join(x[0] for x in available) if available else "KEY CONDITIONS"
+    _header(img, draw, org, number, total, labels)
+    _section_bar(draw, "AT A GLANCE", 55, 145, 970, BLUE, "04")
+
+    # V1.9.37: dynamically allocate cards only for facts that actually exist.
+    # Missing facts are suppressed rather than rendered as "Not specified".
+    if available:
+        n = len(available)
+        gap = 28
+        left = 55
+        usable = 970 - gap * (n - 1)
+        card_w = usable // n
+        for i, card in enumerate(available):
+            x = left + i * (card_w + gap)
+            _stat_card(draw, x, 225, card_w, 220, card[0], card[1], card[2], card[3], card[4])
+        key_y = 480
+    else:
+        key_y = 225
+
+    _card(draw, 55, key_y, 970, 480, WHITE, BORDER, 24, 2)
+    draw.text((85, key_y + 35), "KEY CONDITIONS", font=F_H2, fill=NAVY)
     bullets = []
     for item in _slide_bullets(slide):
         low = item.lower()
+        # Avoid duplicating fields already represented by deterministic cards.
         if any(k in low for k in ("age", "pay", "salary", "fee", "advertisement", "rectt", "notification")):
             continue
         item = _compact_qualification(item, 150)
         if item and item not in bullets:
             bullets.append(item)
-    if not bullets:
-        bullets = ["Category-wise age relaxation applies as specified in the official notification."]
-    _draw_bullets(draw, bullets[:4], 90, 585, 900, 875, BLUE, 4, F_BODY)
-    _pill(draw, "VERIFY CATEGORY-WISE CONDITIONS", 55, 1000, PALE_YELLOW, NAVY)
+    if bullets:
+        _draw_bullets(draw, bullets[:4], 90, key_y + 105, 900, key_y + 395, BLUE, 4, F_BODY)
+    _pill(draw, "VERIFY CATEGORY-WISE CONDITIONS", 55, min(key_y + 520, 1085), PALE_YELLOW, NAVY)
     _footer(draw)
 
+
 def _presentation_application_dates(slide: dict, facts: dict) -> tuple[str, str]:
-    """V1.9.34: resolve application dates for rendering without showing blank timelines.
+    """V1.9.37: resolve application dates for rendering without showing blank timelines.
 
     Priority:
       1. locked semantic facts
@@ -540,7 +576,7 @@ def _presentation_application_dates(slide: dict, facts: dict) -> tuple[str, str]
     start = _date_label(canonical.get("application_start") or facts.get("application_start"))
     end = _date_label(canonical.get("application_end") or facts.get("application_end"))
 
-    # V1.9.35: once canonical dates exist, do not mine Qwen prose for a
+    # V1.9.37: once canonical dates exist, do not mine Qwen prose for a
     # replacement date. The renderer must be deterministic for application
     # start/end.
     if start and end:
@@ -584,37 +620,62 @@ def _presentation_application_dates(slide: dict, facts: dict) -> tuple[str, str]
     return start, end
 
 
+def _is_application_date_bullet(text: str) -> bool:
+    s = str(text or "").lower()
+    return bool(re.search(r"application|apply|deadline|last date|closing date", s))
+
 def _draw_dates_selection(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "DATES • SELECTION PROCESS")
-    draw.text((55, 150), "IMPORTANT DATES", font=F_TITLE, fill=NAVY)
-
-    # V1.9.34: use the semantic locked facts first, then recover explicit
-    # application start/end values already present in the validated slide plan.
-    # This prevents a correct plan from rendering "See official notification"
-    # merely because an upstream structured field was blank.
     start, end = _presentation_application_dates(slide, facts)
-    y = 235
-    # Timeline
-    draw.line((115, y + 42, 115, y + 260), fill=BLUE, width=6)
-    for cy, label, value, accent in [
-        (y, "APPLICATION OPENS", start, GREEN),
-        (y + 180, "LAST DATE TO APPLY", end, RED),
-    ]:
-        draw.ellipse((91, cy + 18, 139, cy + 66), fill=accent)
-        draw.ellipse((104, cy + 31, 126, cy + 53), fill=WHITE)
-        _text(draw, label, 165, cy + 8, F_SMALL_B, accent, 320, 4, 1)
-        _text(draw, value or "See official notification", 165, cy + 43, F_H2, DARK, 470, 5, 2)
 
-    _card(draw, 55, 555, 970, 485, NAVY, NAVY, 24, 2)
-    draw.text((85, 590), "SELECTION PROCESS", font=F_H2, fill=YELLOW)
+    # V1.9.37: only render timeline nodes for dates that actually exist.
+    dates = []
+    if start:
+        dates.append(("APPLICATION OPENS", start, GREEN))
+    if end:
+        dates.append(("LAST DATE TO APPLY", end, RED))
+
+    if dates:
+        draw.text((55, 150), "IMPORTANT DATES", font=F_TITLE, fill=NAVY)
+        y = 235
+        if len(dates) == 2:
+            draw.line((115, y + 42, 115, y + 260), fill=BLUE, width=6)
+        for idx, (label, value, accent) in enumerate(dates):
+            cy = y + (180 * idx if len(dates) == 2 else 90 * idx)
+            draw.ellipse((91, cy + 18, 139, cy + 66), fill=accent)
+            draw.ellipse((104, cy + 31, 126, cy + 53), fill=WHITE)
+            _text(draw, label, 165, cy + 8, F_SMALL_B, accent, 320, 4, 1)
+            _text(draw, value, 165, cy + 43, F_H2, DARK, 470, 5, 2)
+        selection_y = 555 if len(dates) == 2 else 430
+    else:
+        # No application dates: suppress the entire date section.
+        selection_y = 190
+
     selection = _clean(facts.get("selection_process"))
     if not selection:
-        selection = next((b for b in _slide_bullets(slide) if "selection" in b.lower() or "exam" in b.lower() or "test" in b.lower()), "See official notification for selection stages.")
-    _draw_bullets(draw, [selection] + [b for b in _slide_bullets(slide) if b != selection], 90, 645, 900, 1000, WHITE, 5, F_BODY, WHITE)
-    _pill(draw, "SELECTION MAY DIFFER BY POST", 55, 1085, PALE_YELLOW, NAVY)
-    _footer(draw)
+        selection = next(
+            (b for b in _slide_bullets(slide)
+             if any(k in b.lower() for k in ("selection", "exam", "test", "interview"))),
+            "",
+        )
 
+    if selection:
+        card_h = 485 if selection_y >= 500 else 640
+        _card(draw, 55, selection_y, 970, card_h, NAVY, NAVY, 24, 2)
+        draw.text((85, selection_y + 35), "SELECTION PROCESS", font=F_H2, fill=YELLOW)
+        bullets = [selection] + [
+            b for b in _slide_bullets(slide)
+            if b != selection and not _is_application_date_bullet(b)
+        ]
+        _draw_bullets(draw, bullets[:5], 90, selection_y + 90, 900, selection_y + card_h - 40, WHITE, 5, F_BODY, WHITE)
+        pill_y = min(selection_y + card_h + 35, 1085)
+        _pill(draw, "SELECTION MAY DIFFER BY POST", 55, pill_y, PALE_YELLOW, NAVY)
+    else:
+        # No selection fact: leave the main body intentionally clean.
+        _pill(draw, "READ THE OFFICIAL NOTIFICATION BEFORE APPLYING", 55, 220, PALE_YELLOW, NAVY)
+
+    _footer(draw)
 
 def _domain(url: str) -> str:
     try:

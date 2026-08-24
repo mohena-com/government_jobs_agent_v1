@@ -93,17 +93,35 @@ def _date_tokens_for_qa(text: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 def _application_date_mentions(text: str) -> list[str]:
-    """Return full dates occurring near application-window language."""
+    """Return only dates semantically belonging to the application window.
+
+    V1.9.37: do not treat nearby operational dates (walk-in, exam, training,
+    joining, document verification, etc.) as application dates merely because
+    another application bullet happens to be close to them.
+    """
     out = []
     date_re = re.compile(
         r"(?<!\d)(?:\d{1,2}[/-]\d{1,2}[/-]20\d{2}|20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})(?!\d)",
         re.I,
     )
-    keywords = ("application", "apply", "opens", "opening", "deadline", "last date", "closing date")
-    for m in date_re.finditer(text or ""):
-        context = (text[max(0, m.start()-70):m.end()+70]).lower()
-        if any(k in context for k in keywords):
-            out.append(m.group(0))
+    positive = (
+        "application", "apply", "applying", "opens", "opening",
+        "deadline", "last date", "closing date", "online form",
+    )
+    negative = (
+        "walk-in", "walk in", "exam", "examination", "test",
+        "training", "joining", "document verification", "interview",
+        "admit card", "result", "counselling", "counseling",
+    )
+    # Work line-by-line. This prevents a nearby "Apply" line from poisoning a
+    # separate "Walk-in Dates" line.
+    for line in str(text or "").splitlines():
+        line_low = line.lower()
+        if any(k in line_low for k in negative):
+            continue
+        if not any(k in line_low for k in positive):
+            continue
+        out.extend(m.group(0) for m in date_re.finditer(line))
     return out
 
 def _date_end(facts: dict) -> date | None:
@@ -197,7 +215,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
         # separate notification/exam date to appear elsewhere.
         app_allowed_dates = _application_date_set(facts)
         if app_allowed_dates:
-            for raw_date in _application_date_mentions(" ".join([headline, subtitle] + [str(x) for x in bullets])):
+            for raw_date in _application_date_mentions("\n".join([headline, subtitle] + [str(x) for x in bullets])):
                 parsed = _date_tokens_for_qa(raw_date)
                 if parsed and parsed[0] not in app_allowed_dates:
                     slide_errors.append(
