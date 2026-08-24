@@ -648,11 +648,13 @@ def render_qwen_plan(plan_path: str | Path, output_dir: str | Path, job_index: i
     for job in data.get("jobs", []):
         if job_index is not None and job.get("job_index") != job_index:
             continue
-        if job.get("presentation_ready") is False:
-            continue
+        # V1.9.26: rendering is a separate delivery layer. A job may have
+        # source/slide QA warnings and still be renderable when it has a
+        # complete six-slide plan. The QA result remains in the JSON audit;
+        # rendering must not silently discard the job.
         plan = job.get("slide_plan") or {}
         slides = plan.get("slides") or []
-        if not slides:
+        if not slides or len(slides) != 6:
             continue
         facts = job.get("locked_facts") or {}
         organisation = _clean(facts.get("organisation"))

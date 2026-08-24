@@ -63,3 +63,7 @@ Only after `quality_gate_status: PASS` should Qwen generation be enabled.
 ## Note
 
 Official PDF downloads require network access from the machine running the agent. If the government PDF host is temporarily unreachable, the verifier records a download error and blocks Qwen rather than fabricating facts.
+
+
+## V1.9.23
+See `V1.9.23_CHANGELOG.md`. Daily end-to-end runner: `scripts/generate_all_today.sh`.

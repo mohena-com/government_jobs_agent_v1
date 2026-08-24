@@ -177,11 +177,23 @@ def generate_from_docx(
             "official_verification": verification,
         }
 
-        if quality_gate_only or gate["status"] == "FAIL":
+        # V1.9.26: source QA and presentation QA are separate layers.
+        # In batch/presentation mode a source-quality failure is recorded in
+        # the audit metadata but does not prevent Qwen from producing a
+        # source-constrained presentation. Qwen receives only LOCKED_FACTS and
+        # the slide gate still rejects invented/unsupported content.
+        source_gate_failed = gate["status"] == "FAIL"
+        presentation_mode = batch_mode or not fail_on_quality_gate
+
+        if quality_gate_only:
             record["slide_plan"] = None
             record["validation_warnings"] = []
-            if gate["status"] == "FAIL":
-                record["action"] = "BLOCKED: fix source extraction before sending facts to Qwen"
+            if source_gate_failed:
+                record["action"] = "BLOCKED: source quality gate only"
+        elif source_gate_failed and not presentation_mode:
+            record["slide_plan"] = None
+            record["validation_warnings"] = []
+            record["action"] = "BLOCKED: fix source extraction before sending facts to Qwen"
         else:
             attempts = []
             raw_plan = client.generate_slide_plan(facts, slide_count=slide_count)
@@ -219,7 +231,15 @@ def generate_from_docx(
             record["presentation_ready"] = slide_gate["status"] == "PASS"
             if slide_gate["status"] == "FAIL":
                 record["action"] = "BLOCKED: slide-level quality gate failed after automatic repair"
+                record["presentation_ready"] = False
                 any_failed = True
+            elif source_gate_failed:
+                record["action"] = (
+                    "QWEN_GENERATED_WITH_SOURCE_WARNINGS_AND_SLIDE_GATE_PASSED"
+                    if len(attempts) == 1
+                    else "QWEN_GENERATED_AFTER_AUTOMATIC_REPAIR_WITH_SOURCE_WARNINGS_AND_SLIDE_GATE_PASSED"
+                )
+                record["presentation_ready"] = True
             elif len(attempts) > 1:
                 record["action"] = "QWEN_GENERATED_AFTER_AUTOMATIC_REPAIR_AND_SLIDE_GATE_PASSED"
             else:
@@ -251,7 +271,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.18", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.26", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
