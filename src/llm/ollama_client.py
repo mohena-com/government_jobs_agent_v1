@@ -118,8 +118,11 @@ class OllamaClient:
                 "fit_content_for_instagram": True,
                 "no_raw_urls": True,
                 "no_internal_audit_text": True,
+                "use_presentation_fallbacks_when_fields_are_empty": True,
+                "use_presentation_fallbacks_when_fields_are_empty": True,
             },
-            "LOCKED_FACTS": facts,
+            "ALLOWED_FACTS": facts,
+            "FALLBACK_RULE": "For any empty field, use presentation_fallbacks or omit the field. Never invent.",
         }
         data = self.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],

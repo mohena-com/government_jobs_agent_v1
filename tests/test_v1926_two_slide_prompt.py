@@ -1,8 +1,7 @@
 from src.llm.ollama_client import OllamaClient
 
 
-def test_v1926_schema_is_exactly_two_slides():
-    schema = OllamaClient._two_slide_schema()
-    assert list(schema["properties"]) == ["slide_1", "slide_2"]
-    assert schema["properties"]["slide_1"]["properties"]["type"]["enum"] == ["job_details"]
-    assert schema["properties"]["slide_2"]["properties"]["type"]["enum"] == ["at_a_glance"]
+def test_v1927_schema_replaces_two_slide_contract_with_six_slide_contract():
+    schema = OllamaClient._six_slide_schema()
+    assert len(schema["properties"]) == 6
+    assert "slide_1" in schema["properties"] and "slide_6" in schema["properties"]
