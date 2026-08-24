@@ -119,10 +119,12 @@ class OllamaClient:
                 "no_raw_urls": True,
                 "no_internal_audit_text": True,
                 "use_presentation_fallbacks_when_fields_are_empty": True,
-                "use_presentation_fallbacks_when_fields_are_empty": True,
+                "application_dates_are_locked": True,
+                "application_dates_must_match_locked_facts_exactly": True,
             },
             "ALLOWED_FACTS": facts,
             "FALLBACK_RULE": "For any empty field, use presentation_fallbacks or omit the field. Never invent.",
+            "DATE_RULE": "Application start/end dates are semantic fields. Use only the exact dates in ALLOWED_FACTS.application_start and ALLOWED_FACTS.application_end. Never substitute fee-payment, exam, notification, admit-card, or unrelated dates.",
         }
         data = self.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}],
@@ -145,7 +147,7 @@ FIXED SLOTS:
 5 dates_selection = dates + selection process
 6 apply_links = documents/instructions + official links + deadline CTA
 
-Resolve every gate error without inventing facts. Condense content rather than omitting verified posts or shrinking text. Remove source/audit/debug boilerplate. Never print raw URLs. Keep each bullet short and applicant-facing.
+Resolve every gate error without inventing facts. Condense content rather than omitting verified posts or shrinking text. Remove source/audit/debug boilerplate. Never print raw URLs. Keep each bullet short and applicant-facing. Application start/end dates are locked semantic facts: use them exactly and never replace them with fee-payment, exam, notification, or other dates.
 """.strip()
         user = {"task": "Repair the six-slide plan for factual completeness and visual fit.", "gate_errors": gate_errors, "previous_plan": previous_plan, "LOCKED_FACTS": facts}
         data = self.chat(

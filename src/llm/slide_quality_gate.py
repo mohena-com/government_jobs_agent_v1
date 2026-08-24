@@ -68,6 +68,45 @@ def _numeric_tokens(text: str) -> set[str]:
     return {x.strip(".,") for x in raw if x.strip(".,")}
 
 
+
+
+def _application_date_set(facts: dict) -> set[str]:
+    values = set()
+    for key in ("application_start", "application_end"):
+        values.update(_date_tokens_for_qa(str(facts.get(key) or "")))
+    return values
+
+def _date_tokens_for_qa(text: str) -> list[str]:
+    months = {m.lower(): i for i, m in enumerate((
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ), 1)}
+    out = []
+    for m in re.finditer(r"(?<!\d)(\d{1,2})[/-](\d{1,2})[/-](20\d{2})(?!\d)", text or ""):
+        try: out.append(f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}")
+        except ValueError: pass
+    for m in re.finditer(r"(?<!\d)(20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)", text or ""):
+        try: out.append(f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}")
+        except ValueError: pass
+    for m in re.finditer(r"(?<!\d)(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})(?!\d)", text or "", re.I):
+        try: out.append(f"{int(m.group(3)):04d}-{months[m.group(2).lower()]:02d}-{int(m.group(1)):02d}")
+        except (ValueError, KeyError): pass
+    return list(dict.fromkeys(out))
+
+def _application_date_mentions(text: str) -> list[str]:
+    """Return full dates occurring near application-window language."""
+    out = []
+    date_re = re.compile(
+        r"(?<!\d)(?:\d{1,2}[/-]\d{1,2}[/-]20\d{2}|20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})(?!\d)",
+        re.I,
+    )
+    keywords = ("application", "apply", "opens", "opening", "deadline", "last date", "closing date")
+    for m in date_re.finditer(text or ""):
+        context = (text[max(0, m.start()-70):m.end()+70]).lower()
+        if any(k in context for k in keywords):
+            out.append(m.group(0))
+    return out
+
 def _date_end(facts: dict) -> date | None:
     value = str(facts.get("application_end") or "")
     m = re.search(r"(20\d{2})-(\d{2})-(\d{2})", value)
@@ -152,6 +191,19 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
                 continue
             if token not in numbers:
                 slide_warnings.append(f"Generated numeric token not found in locked facts: {token}")
+
+        # V1.9.33: dates near application-language are hard-bound to the
+        # application_start/application_end facts. This catches model errors such
+        # as turning 27 August 2026 into 27 July 2007 while still allowing a
+        # separate notification/exam date to appear elsewhere.
+        app_allowed_dates = _application_date_set(facts)
+        if app_allowed_dates:
+            for raw_date in _application_date_mentions(" ".join([headline, subtitle] + [str(x) for x in bullets])):
+                parsed = _date_tokens_for_qa(raw_date)
+                if parsed and parsed[0] not in app_allowed_dates:
+                    slide_errors.append(
+                        f"Application date '{raw_date}' is not supported by locked application dates {sorted(app_allowed_dates)}"
+                    )
 
         end_date = _date_end(facts)
         if end_date:

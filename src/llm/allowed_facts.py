@@ -58,13 +58,17 @@ def build_allowed_facts(facts: dict) -> tuple[dict, dict]:
     for key in (
         "official_verification", "verification_items", "verification_required",
         "derived_vacancy_sum", "extraction_notes", "raw_post_vacancies", "source",
+        "application_date_evidence", "application_dates_crosscheck",
+        "application_dates_crosscheck_error",
     ):
         allowed.pop(key, None)
 
     allowed["presentation_fallbacks"] = fallbacks
     allowed["presentation_rule"] = (
         "Use exact available facts. When a field is unavailable, omit it or use "
-        "the corresponding presentation_fallback. Never invent a value."
+        "the corresponding presentation_fallback. Never invent a value. Application "
+        "start/end dates are semantically locked and must never be replaced by fee, "
+        "exam, notification, or other dates."
     )
     return allowed, fallbacks
 
