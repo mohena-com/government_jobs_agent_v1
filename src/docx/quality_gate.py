@@ -61,6 +61,24 @@ def quality_gate(job: dict, facts: dict) -> dict:
     # validate that canonical list and never trust raw parser totals downstream.
     canonical = facts.get("post_vacancies")
     official = facts.get("official_verification") or {}
+    post_facts = facts.get("post_facts") or []
+    if post_facts and canonical:
+        expected_posts = {
+            str(x.get("post") or "").strip().lower()
+            for x in canonical
+            if isinstance(x, dict) and x.get("post")
+        }
+        actual_posts = {
+            str(x.get("post") or "").strip().lower()
+            for x in post_facts
+            if isinstance(x, dict) and x.get("post")
+        }
+        missing_posts = sorted(expected_posts - actual_posts)
+        if missing_posts:
+            errors.append(
+                "Official post eligibility missing for: " + ", ".join(missing_posts)
+            )
+
     if canonical:
         canonical_sum = sum(int(x.get("vacancies") or 0) for x in canonical if isinstance(x, dict))
         if total is not None and canonical_sum != total:

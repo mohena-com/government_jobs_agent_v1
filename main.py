@@ -27,6 +27,7 @@ p.add_argument("--verify-official", action="store_true", help="Download and veri
 p.add_argument("--render-qwen", help="Render a Qwen JSON plan after it passes the slide-level gate")
 p.add_argument("--render-output", default="social/rendered", help="Directory for rendered Qwen Instagram slides")
 p.add_argument("--published-today", action="store_true", help="Crawl only jobs whose Published/Updated date is today (IST)")
+p.add_argument("--batch-mode", action="store_true", help="Process one DOCX job without raising on a quality-gate failure; write the diagnostic JSON and return normally")
 
 args = p.parse_args()
 
@@ -57,6 +58,7 @@ if args.docx:
         quality_gate_only=args.quality_gate_only,
         fail_on_quality_gate=not args.allow_qwen_on_failed_gate,
         verify_official=args.verify_official,
+        batch_mode=args.batch_mode,
     )
     print(f"DOCX: {args.docx}")
     print(f"Ollama: {args.ollama_host}")

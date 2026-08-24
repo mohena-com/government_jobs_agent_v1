@@ -51,6 +51,7 @@ def generate_from_docx(
     quality_gate_only: bool = False,
     fail_on_quality_gate: bool = True,
     verify_official: bool = False,
+    batch_mode: bool = False,
 ):
     parsed = read_docx(docx_path)
     output_dir = Path(output_dir)
@@ -84,9 +85,22 @@ def generate_from_docx(
                 'official_verification', 'post_vacancies', 'raw_post_vacancies',
                 'derived_vacancy_sum', 'post_eligibility', 'post_facts', 'experience',
             }
+            verification_docs = (verification or {}).get("advertisements", [])
+            has_rvunl_authoritative_docs = any(
+                d.get("document_type") in {"JE", "JA_ACCOUNTANT", "SHORT_NOTICE"}
+                for d in verification_docs
+            )
             for k, v in verified_facts.items():
-                if k in authoritative_keys or v not in ("", None, []):
-                    facts[k] = v
+                # Specialised RVUNL verification is authoritative even when a
+                # field is deliberately empty. Generic verification is
+                # conservative: empty extraction means "not safely extracted"
+                # and must not erase a good DOCX fact.
+                if has_rvunl_authoritative_docs:
+                    if k in authoritative_keys or v not in ("", None, []):
+                        facts[k] = v
+                else:
+                    if v not in ("", None, []):
+                        facts[k] = v
             facts["official_verification"] = verification
         gate = quality_gate(job, facts)
         if verify_official:
@@ -188,7 +202,7 @@ def generate_from_docx(
 
     # In diagnostic/quality-gate-only mode, return the report normally so callers
     # can inspect the exact extraction and verification failures.
-    if fail_on_quality_gate and any_failed and not quality_gate_only:
+    if fail_on_quality_gate and any_failed and not quality_gate_only and not batch_mode:
         raise RuntimeError("Quality gate failed. Review qwen output JSON; Qwen generation was blocked for failed jobs.")
 
     return summary_path, generated

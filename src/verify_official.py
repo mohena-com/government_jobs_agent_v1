@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 import requests
 from pypdf import PdfReader
+from urllib.parse import urlparse
 
 RVUNL_URLS = {
     'https://jankalyanfile.rajasthan.gov.in/WebMyWayFiles/DepartmentMaster/183/2026/Aug/30409/1834ef1422d-0e7f-4f51-bfd3-6c602a408063.pdf',
@@ -33,8 +34,15 @@ def download_pdf(url: str, cache_dir: str | Path = 'cache/official_pdfs') -> Pat
     name = hashlib.sha256(url.encode()).hexdigest()[:16] + '.pdf'
     path = cache / name
     if not path.exists():
-        r = requests.get(url, timeout=60, headers={'User-Agent':'government-jobs-agent/1.9'})
-        r.raise_for_status(); path.write_bytes(r.content)
+        r = requests.get(url, timeout=60, headers={'User-Agent':'government-jobs-agent/1.9.23'})
+        r.raise_for_status()
+        content = r.content
+        ctype = (r.headers.get('content-type') or '').lower()
+        # Never save an HTML/application page as a PDF. This was a major source
+        # of misleading "invalid pdf header" failures in batch processing.
+        if not content.startswith(b'%PDF-') and 'application/pdf' not in ctype:
+            raise ValueError(f"URL did not return a PDF (content-type={ctype or 'unknown'})")
+        path.write_bytes(content)
     return path
 
 def pdf_text(path: str | Path) -> list[str]:
@@ -201,7 +209,32 @@ def _rvunl_post_fact_blocks(text: str, ad: str) -> list[dict]:
         for i,(name,_) in enumerate(posts):
             pass
     else:
+        # Older/nonstandard RVUNL education-table layout. Try a conservative
+        # numbered-post fallback after the normal advertisement-specific logic.
+        legacy = re.finditer(
+            r'(?:^|\s)(?:1|2)\.\s*(Junior Accountant|Junior Assistant/\s*Commercial Assistant-II)\s*',
+            text, re.I
+        )
+        legacy_matches = [(m.start(), m.end(), _clean(m.group(1))) for m in legacy]
+        if legacy_matches:
+            out=[]
+            for i,(st,en,name) in enumerate(legacy_matches):
+                end = legacy_matches[i+1][0] if i+1 < len(legacy_matches) else len(text)
+                block = text[en:end]
+                cut = re.search(r'\b(?:Disqualification|Physical Fitness|Character)\b', block, re.I)
+                if cut:
+                    block = block[:cut.start()]
+                block = _clean(block)
+                if block:
+                    out.append({
+                        'post': name,
+                        'qualification': block[:5000],
+                        'experience': '',
+                        'source_method': 'RVUNL_EDUCATION_TABLE',
+                    })
+            return out
         return []
+
 
     out=[]
     if ad.endswith('/02'):
@@ -225,6 +258,23 @@ def _rvunl_post_fact_blocks(text: str, ad: str) -> list[dict]:
             m=re.search(pat,text,re.I)
             if m: matches.append((m.start(),m.end(),name))
         matches.sort()
+        if not matches:
+            legacy = re.finditer(
+                r'(?:^|\s)(?:1|2)\.\s*(Junior Accountant|Junior Assistant/\s*Commercial Assistant-II)\s*',
+                text, re.I
+            )
+            legacy_matches = [(m.start(), m.end(), _clean(m.group(1))) for m in legacy]
+            for i,(st,en,name) in enumerate(legacy_matches):
+                end = legacy_matches[i+1][0] if i+1 < len(legacy_matches) else len(text)
+                block = text[en:end]
+                cut = re.search(r'\b(?:Disqualification|Physical Fitness|Character)\b', block, re.I)
+                if cut: block = block[:cut.start()]
+                qm = re.search(r'(?:candidate must|educational qualification|qualification)', block, re.I)
+                if qm: block = block[qm.start():]
+                block = _clean(block)
+                if block:
+                    out.append({'post':name,'qualification':block[:5000],'experience':'','source_method':'RVUNL_EDUCATION_TABLE'})
+            return out
         for i,(st,en,name) in enumerate(matches):
             end=matches[i+1][0] if i+1<len(matches) else len(text)
             block=text[en:end]
@@ -284,6 +334,124 @@ def _deep_extract(text: str, post_names: list[str], ad: str = '') -> dict:
         'experience_official': _section(text,['Experience'],max_chars=1800),
     }
 
+def _generic_classify(text: str, url: str) -> dict:
+    """Generic official-PDF classifier for non-RVUNL recruitment notices.
+
+    V1.9.23 keeps the RVUNL-specific reconciliation intact, but the previous
+    verifier classified every other organisation as UNKNOWN. That made a valid
+    official PDF fail verification for essentially every non-RVUNL job.
+    This conservative generic classifier extracts only high-confidence fields;
+    fields it cannot extract are left for the DOCX facts to retain.
+    """
+    t = _clean(text)
+
+    # Organisation: prefer common official-document headings and otherwise use
+    # the first plausible all-caps/official-name line.
+    org = ''
+    patterns = [
+        r'([A-Z][A-Z0-9&.,()\'/-]{3,}(?:\s+[A-Z][A-Z0-9&.,()\'/-]{2,}){1,12})\s*(?:\n|$)',
+        r'(?:Government|Govt\.?)\s+of\s+[A-Z][A-Za-z .&-]{2,80}',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            candidate = _clean(m.group(1) if m.lastindex else m.group(0))
+            if len(candidate) >= 5 and not candidate.lower().startswith(('advertisement', 'important', 'application')):
+                org = candidate
+                break
+
+    ad = ''
+    for pat in [
+        r'(?:Advertisement|Advt\.?|Recruitment|Notification)\s*(?:No\.?|Number)?\s*[:\-]?\s*([A-Za-z0-9./()_-]{2,80})',
+        r'\b(CEN\s*[-/]?\s*[0-9A-Za-z./_-]+)\b',
+    ]:
+        m = re.search(pat, t, re.I)
+        if m:
+            ad = _clean(m.group(1))
+            break
+
+    # Prefer explicitly labelled dates.
+    start = ''
+    end = ''
+    for pat in [
+        r'(?:application|registration)\s*(?:starts?|begins?|opens?)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
+        r'(?:apply\s+online\s+from|online\s+application\s+from)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
+    ]:
+        m = re.search(pat, t, re.I)
+        if m:
+            start = _date_iso(m.group(1))
+            if start: break
+    for pat in [
+        r'(?:last\s+date|closing\s+date|application\s+(?:ends?|deadline)|last\s+date\s+to\s+apply)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
+        r'(?:apply\s+online\s+till|online\s+application\s+till)\s*[:\-]?\s*([0-9]{1,2}[A-Za-z ./,-]+20[0-9]{2})',
+    ]:
+        m = re.search(pat, t, re.I)
+        if m:
+            end = _date_iso(m.group(1))
+            if end: break
+
+    dates = []
+    for m in re.finditer(r'\b\d{1,2}(?:st|nd|rd|th)?[ ./-]+[A-Za-z]+[, ./-]+20\d{2}\b|\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b', t, re.I):
+        d = _date_iso(m.group(0))
+        if d and d not in dates:
+            dates.append(d)
+    if not start and dates:
+        start = dates[0]
+    if not end and len(dates) > 1:
+        end = dates[1]
+
+    total = ''
+    for pat in [
+        r'\b(?:total\s+)?(?:of\s+)?([\d,]+)\s+(?:posts?|vacancies|positions|openings)\b',
+        r'\btotal\s+vacancies\s*[:\-]?\s*([\d,]+)\b',
+    ]:
+        m = re.search(pat, t, re.I)
+        if m:
+            total = m.group(1).replace(',', '')
+            break
+
+    age = ''
+    for pat in [
+        r'age\s+limit\s*[:\-]?\s*([^.;\n]{3,120})',
+        r'(?:minimum\s+age|minimum\s+age\s+limit)\s*[:\-]?\s*([^.;\n]{2,80})',
+    ]:
+        m = re.search(pat, t, re.I)
+        if m:
+            age = _clean(m.group(1))
+            break
+
+    pay = _section(t, ['Pay Scale', 'Pay Level', 'Salary', 'Remuneration'], max_chars=500)
+    eligibility = _section(t, ['Educational Qualification', 'Education Qualification', 'Essential Qualification', 'Qualification', 'Eligibility'], max_chars=2500)
+    selection = _section(t, ['Selection Process', 'Selection Procedure', 'Mode of Selection'], max_chars=1500)
+    fee = _clean_fee(_section(t, ['Application Fee', 'Examination Fee', 'Fee Details'], max_chars=1200))
+    how = _section(t, ['How to Apply', 'How To Apply', 'Online Application', 'Application Procedure'], max_chars=1500)
+
+    posts = _post_sections(t)
+    post_names = [_canonical_post(p.get('post','')) for p in posts]
+    post_elig = _post_eligibility(t, post_names)
+
+    return {
+        'url': url,
+        'advertisement_number': ad,
+        'document_type': 'GENERIC',
+        'organisation': org,
+        'published_date': dates[0] if dates else '',
+        'application_start': start,
+        'application_end': end,
+        'age_limit': age,
+        'post_sections': posts,
+        'short_notice_total': int(total) if total else None,
+        'pay_scale': pay,
+        'post_eligibility': post_elig,
+        'selection_process': selection,
+        'application_fee_official': fee,
+        'how_to_apply': how,
+        'experience_official': _section(t, ['Experience'], max_chars=1200),
+        'generic_total': total,
+        'source_pages': max(1, len(text)),
+    }
+
+
 def _classify(text: str, url: str) -> dict:
     m = re.search(r'(?:Advertisement|advertisement)\s+(?:(?:No\.|no\.)|bearing\s+no\.)\s*([A-Za-z0-9./-]+)', text, re.I)
     ad = _clean(m.group(1)) if m else ''
@@ -338,19 +506,32 @@ def _classify(text: str, url: str) -> dict:
 
 
 def verify_urls(urls: list[str], cache_dir: str|Path='cache/official_pdfs') -> dict:
-    docs=[]; errors=[]
+    docs=[]; errors=[]; skipped=[]
     for url in urls:
+        if not url:
+            continue
+        host = urlparse(url).netloc.lower()
+        # A SarkariResult detail page is a source page, not an official
+        # notification PDF. Never let it poison official-PDF verification.
+        if 'sarkariresult.com' in host:
+            skipped.append({'url': url, 'reason': 'third-party detail page; not an official PDF'})
+            continue
         try:
             path=download_pdf(url,cache_dir)
             pages=pdf_text(path)
             text='\n'.join(pages)
+            if not text.strip():
+                raise ValueError('PDF contains no extractable text')
             d = _classify(text, url)
+            if d.get('document_type') == 'UNKNOWN':
+                d = _generic_classify(text, url)
             d['source_pages'] = len(pages)
             docs.append(d)
         except Exception as e:
+            # A broken auxiliary URL should not invalidate a valid official
+            # notification PDF. It remains visible in the audit trail.
             errors.append({'url':url,'error':str(e)})
-    docs=[d for d in docs if d['document_type']!='UNKNOWN']
-    return reconcile(docs, errors)
+    return reconcile(docs, errors, skipped)
 
 
 def _canonical_post(name: str) -> str:
@@ -384,9 +565,11 @@ def _apply_authoritative_profile(post_totals: list[dict]) -> tuple[list[dict], l
     return repaired, repairs
 
 
-def reconcile(docs:list[dict], errors:list[dict]) -> dict:
+def reconcile(docs:list[dict], errors:list[dict], skipped:list[dict] | None = None) -> dict:
+    skipped = skipped or []
     detailed = [d for d in docs if d.get('document_type') in {'JE','JA_ACCOUNTANT'}]
     short = [d for d in docs if d.get('document_type') == 'SHORT_NOTICE']
+    generic = [d for d in docs if d.get('document_type') == 'GENERIC']
     ads={d['advertisement_number']:d for d in detailed if d.get('advertisement_number')}
 
     raw_post_totals=[]
@@ -431,16 +614,51 @@ def reconcile(docs:list[dict], errors:list[dict]) -> dict:
     expected_combined = RVUNL_OFFICIAL_COMBINED_TOTAL if any(
         d.get('advertisement_number','').startswith('RVUN/Rectt.-2026-27/') for d in detailed
     ) else None
-    authoritative_total = expected_combined if expected_combined is not None else (short_total or detailed_total or None)
+    generic_totals = []
+    for d in generic:
+        try:
+            if d.get('generic_total'):
+                generic_totals.append(int(str(d['generic_total']).replace(',', '')))
+            elif d.get('short_notice_total') is not None:
+                generic_totals.append(int(d['short_notice_total']))
+        except (TypeError, ValueError):
+            pass
+
+    authoritative_total = (
+        expected_combined if expected_combined is not None
+        else (short_total or detailed_total or (generic_totals[0] if generic_totals else None))
+    )
+
+    if generic:
+        gstarts = {d.get('application_start') for d in generic if d.get('application_start')}
+        gends = {d.get('application_end') for d in generic if d.get('application_end')}
+        generic_dates_ok = len(gstarts) <= 1 and len(gends) <= 1
+        if not starts and gstarts:
+            starts = gstarts
+        if not ends and gends:
+            ends = gends
+        if not dates_ok and generic_dates_ok and starts and ends:
+            dates_ok = True
 
     profile_match = expected_combined is None or detailed_total == expected_combined
     short_match = short_total is None or detailed_total == short_total
-    status = 'PASS' if (len(ads) >= 2 and detailed_total > 0 and dates_ok and not errors and profile_match and short_match) else 'FAIL'
+    # RVUNL retains the strict multi-document reconciliation rules.
+    # For other organisations, a successfully parsed official PDF is itself a
+    # valid verification anchor. The detailed DOCX facts are retained when the
+    # generic PDF parser cannot safely extract a field; they are not silently
+    # replaced by empty values.
+    if detailed or short:
+        status = 'PASS' if (len(ads) >= 2 and detailed_total > 0 and dates_ok and not errors and profile_match and short_match) else 'FAIL'
+    elif generic:
+        status = 'PASS' if all(int(d.get('source_pages') or 0) > 0 for d in generic) else 'FAIL'
+    else:
+        status = 'FAIL'
 
     return {
         'documents': docs,
         'download_errors': errors,
-        'advertisements': list(ads.values()),
+        'skipped_urls': skipped,
+        'advertisements': list(ads.values()) + generic,
         'post_vacancies': post_totals,
         'raw_post_vacancies': raw_post_totals,
         'extraction_repairs': repairs,
@@ -457,63 +675,113 @@ def reconcile(docs:list[dict], errors:list[dict]) -> dict:
 
 
 def apply_to_job(job:dict, verification:dict) -> tuple[dict,dict]:
+    """Apply official verification without erasing good DOCX facts.
+
+    RVUNL's specialised reconciler remains authoritative for all fields it
+    extracts. For generic official PDFs, only non-empty extracted values replace
+    DOCX facts; an empty generic extraction means "not safely extracted", not
+    "fact is empty".
+    """
     facts={}
     docs=verification.get('advertisements',[])
     if docs:
-        facts['organisation']=next((d['organisation'] for d in docs if d.get('organisation')),'')
-        facts['advertisement_number']='; '.join(d['advertisement_number'] for d in docs)
-        facts['published_date']=next((d['published_date'] for d in docs if d.get('published_date')),'')
-        facts['total_vacancies']=str(verification.get('combined_vacancies') or '')
+        def first_nonempty(key, default=''):
+            for d in docs:
+                v=d.get(key)
+                if v not in ('', None, [], {}):
+                    return v
+            return default
+
+        facts['organisation']=first_nonempty('organisation')
+        facts['advertisement_number']='; '.join(d['advertisement_number'] for d in docs if d.get('advertisement_number'))
+        facts['published_date']=first_nonempty('published_date')
+        combined = verification.get('combined_vacancies')
+        if combined:
+            facts['total_vacancies']=str(combined)
         facts['application_start']=verification.get('application_start','')
         facts['application_end']=verification.get('application_end','')
         facts['age_limit']='; '.join(f"{d['advertisement_number']}: {d['age_limit']}" for d in docs if d.get('age_limit'))
         facts['pay_scale']='; '.join(f"{d['advertisement_number']}: {d['pay_scale']}" for d in docs if d.get('pay_scale'))
+
         eligibility_rows=[]
         for d in docs:
             for row in d.get('post_eligibility', []) or []:
-                rr=dict(row); rr['advertisement_number']=d.get('advertisement_number',''); rr['source_url']=d.get('url',''); eligibility_rows.append(rr)
-        facts['post_eligibility'] = eligibility_rows
-        facts['post_facts'] = []
-        vacancy_map = {(x.get('advertisement_number',''), _canonical_post(x.get('post',''))): x for x in verification.get('post_vacancies', [])}
-        for d in docs:
-            for row in d.get('post_eligibility', []) or []:
-                key=(d.get('advertisement_number',''), _canonical_post(row.get('post','')))
-                vr=vacancy_map.get(key,{})
-                facts['post_facts'].append({
-                    'post': row.get('post',''),
-                    'advertisement_number': d.get('advertisement_number',''),
-                    'vacancies': vr.get('vacancies'),
-                    'qualification': row.get('qualification',''),
-                    'experience': row.get('experience',''),
-                    'source_url': d.get('url',''),
-                })
-        facts['eligibility'] = '; '.join(f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}" for r in eligibility_rows) or 'Verified from official advertisements; post-specific educational qualifications were not text-extracted.'
-        facts['selection_process'] = '; '.join(d.get('selection_process','') for d in docs if d.get('selection_process'))
-        facts['how_to_apply'] = '; '.join(d.get('how_to_apply','') for d in docs if d.get('how_to_apply'))
-        facts['experience'] = '; '.join(d.get('experience_official','') for d in docs if d.get('experience_official'))
-        fee_values=[d.get('application_fee_official','') for d in docs if d.get('application_fee_official')]
-        if fee_values: facts['application_fee']='; '.join(fee_values)
-        # Canonical reconciled vacancy structure. Downstream consumers MUST use
-        # this list, not raw parser totals from official_verification.documents.
-        facts['post_vacancies'] = [
-            {
-                'advertisement_number': x.get('advertisement_number',''),
-                'post': x.get('post',''),
-                'vacancies': x.get('vacancies'),
-                'source_url': x.get('source_url',''),
-                'verification_source': x.get('verification_source',''),
+                rr=dict(row)
+                rr['advertisement_number']=d.get('advertisement_number','')
+                rr['source_url']=d.get('url','')
+                eligibility_rows.append(rr)
+
+        if eligibility_rows:
+            facts['post_eligibility'] = eligibility_rows
+            facts['post_facts'] = []
+            vacancy_map = {
+                (x.get('advertisement_number',''), _canonical_post(x.get('post',''))): x
+                for x in verification.get('post_vacancies', [])
             }
-            for x in verification.get('post_vacancies', [])
+            for d in docs:
+                for row in d.get('post_eligibility', []) or []:
+                    key=(d.get('advertisement_number',''), _canonical_post(row.get('post','')))
+                    vr=vacancy_map.get(key,{})
+                    facts['post_facts'].append({
+                        'post': row.get('post',''),
+                        'advertisement_number': d.get('advertisement_number',''),
+                        'vacancies': vr.get('vacancies'),
+                        'qualification': row.get('qualification',''),
+                        'experience': row.get('experience',''),
+                        'source_url': d.get('url',''),
+                    })
+            facts['eligibility'] = '; '.join(
+                f"{r['post']}: {r.get('qualification') or 'Qualification not extracted'}"
+                for r in eligibility_rows
+            )
+        else:
+            # Do not replace an existing DOCX eligibility value with an empty
+            # generic extraction.
+            generic_elig = '; '.join(
+                d.get('post_eligibility_text','') for d in docs if d.get('post_eligibility_text')
+            )
+            if generic_elig:
+                facts['eligibility'] = generic_elig
+
+        selection = '; '.join(d.get('selection_process','') for d in docs if d.get('selection_process'))
+        how = '; '.join(d.get('how_to_apply','') for d in docs if d.get('how_to_apply'))
+        experience = '; '.join(d.get('experience_official','') for d in docs if d.get('experience_official'))
+        fee_values=[d.get('application_fee_official','') for d in docs if d.get('application_fee_official')]
+
+        if selection: facts['selection_process']=selection
+        if how: facts['how_to_apply']=how
+        if experience: facts['experience']=experience
+        if fee_values: facts['application_fee']='; '.join(fee_values)
+
+        canonical = verification.get('post_vacancies', [])
+        if canonical:
+            facts['post_vacancies'] = [
+                {
+                    'advertisement_number': x.get('advertisement_number',''),
+                    'post': x.get('post',''),
+                    'vacancies': x.get('vacancies'),
+                    'source_url': x.get('source_url',''),
+                    'verification_source': x.get('verification_source',''),
+                }
+                for x in canonical
+            ]
+            facts['raw_post_vacancies'] = verification.get('raw_post_vacancies', [])
+            facts['derived_vacancy_sum'] = verification.get('combined_vacancies')
+
+        if verification.get('application_start') and verification.get('application_end'):
+            facts['important_dates'] = (
+                f"Application window: {verification.get('application_start')} "
+                f"to {verification.get('application_end')}"
+            )
+
+        facts['official_links']=[
+            {'label':f"Official Notification {d.get('advertisement_number') or ''}".strip(), 'url':d['url']}
+            for d in docs if d.get('url')
         ]
-        facts['raw_post_vacancies'] = verification.get('raw_post_vacancies', [])
-        facts['derived_vacancy_sum'] = verification.get('combined_vacancies')
-        # Do not carry contaminated DOCX boilerplate into verified facts.
-        # Explicitly overwrite these fields because an empty verified value must
-        # be allowed to replace an untrusted DOCX value.
-        facts['important_dates']=f"Application window: {verification.get('application_start','')} to {verification.get('application_end','')}" if verification.get('application_start') and verification.get('application_end') else ''
-        facts['official_links']=[{'label':f"Official Notification {d['advertisement_number']}",'url':d['url']} for d in docs]
         facts['official_verification']=verification
+
         if verification.get('short_notice_total') is not None:
             facts['original_short_notice_total']=str(verification['short_notice_total'])
             facts['vacancy_reconciliation']=verification.get('vacancy_reconciliation')
+
     return facts, verification
