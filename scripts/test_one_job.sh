@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -u
 
+JOB_COUNT=3
+
 PYTHON_BIN="${PYTHON_BIN:-python3.1}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://webmaster-ai.local:11434}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:8b}"
@@ -12,7 +14,7 @@ echo "=============================================="
 echo
 echo "[1] Generate one job DOCX"
 
-"$PYTHON_BIN" main.py --max-jobs 1 || exit 1
+"$PYTHON_BIN" main.py --max-jobs ${JOB_COUNT} || exit 1
 
 DOCX="$(ls -t reports/jobs/*.docx | grep -v 'Summary.docx' | head -1)"
 
@@ -32,7 +34,7 @@ rm -rf social/qwen_test social/rendered_test
     --docx "$DOCX" \
     --qwen \
     --verify-official \
-    --job-index 1 \
+    --job-index ${JOB_COUNT} \
     --ollama-host "$OLLAMA_HOST" \
     --ollama-model "$OLLAMA_MODEL" \
     --slide-count 6 \
@@ -49,7 +51,7 @@ echo "[3] Render six Instagram slides"
 "$PYTHON_BIN" main.py \
     --render-qwen social/qwen_test/qwen_instagram_plans.json \
     --render-output social/rendered_test \
-    --job-index 1
+    --job-index ${JOB_COUNT}
 
 PNG_COUNT="$(find social/rendered_test -type f -name '*.png' | wc -l | tr -d ' ')"
 
