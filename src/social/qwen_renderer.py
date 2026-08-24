@@ -527,13 +527,66 @@ def _draw_age_pay_fee(img, draw, slide, facts, number, total):
     _pill(draw, "VERIFY CATEGORY-WISE CONDITIONS", 55, 1000, PALE_YELLOW, NAVY)
     _footer(draw)
 
+def _presentation_application_dates(slide: dict, facts: dict) -> tuple[str, str]:
+    """V1.9.34: resolve application dates for rendering without showing blank timelines.
+
+    Priority:
+      1. locked semantic facts
+      2. explicit Application Start / Deadline bullets already present in the
+         validated slide plan
+    The renderer never treats fee-payment or exam dates as application dates.
+    """
+    start = _date_label(facts.get("application_start"))
+    end = _date_label(facts.get("application_end"))
+
+    bullets = _slide_bullets(slide)
+    text = " ".join(str(x) for x in bullets)
+
+    def extract(pattern: str) -> str:
+        m = re.search(pattern, text, re.I)
+        if not m:
+            return ""
+        return _date_label(m.group(1))
+
+    if not start:
+        start = extract(
+            r"application\s+(?:start|opens?|opening(?:\s+date)?)\s*[:\-]\s*"
+            r"(\d{1,2}[/-]\d{1,2}[/-]20\d{2}|\d{1,2}\s+[A-Za-z]+\s+20\d{2})"
+        )
+    if not end:
+        end = extract(
+            r"(?:application\s+deadline|application\s+end|last\s+date\s+to\s+apply|deadline)"
+            r"\s*[:\-]\s*(\d{1,2}[/-]\d{1,2}[/-]20\d{2}|\d{1,2}\s+[A-Za-z]+\s+20\d{2})"
+        )
+
+    # A compact "Apply Online: START – END" bullet is also accepted when the
+    # explicit labels were shortened by the presentation model.
+    if not (start and end):
+        m = re.search(
+            r"apply\s+online\s*[:\-]\s*"
+            r"(\d{1,2}[/-]\d{1,2}[/-]20\d{2}|\d{1,2}\s+[A-Za-z]+\s+20\d{2})"
+            r"\s*(?:to|[-–—])\s*"
+            r"(\d{1,2}[/-]\d{1,2}[/-]20\d{2}|\d{1,2}\s+[A-Za-z]+\s+20\d{2})",
+            text,
+            re.I,
+        )
+        if m:
+            start = start or _date_label(m.group(1))
+            end = end or _date_label(m.group(2))
+
+    return start, end
+
+
 def _draw_dates_selection(img, draw, slide, facts, number, total):
     org = _clean(facts.get("organisation"))
     _header(img, draw, org, number, total, "DATES • SELECTION PROCESS")
     draw.text((55, 150), "IMPORTANT DATES", font=F_TITLE, fill=NAVY)
 
-    start = _date_label(facts.get("application_start"))
-    end = _date_label(facts.get("application_end"))
+    # V1.9.34: use the semantic locked facts first, then recover explicit
+    # application start/end values already present in the validated slide plan.
+    # This prevents a correct plan from rendering "See official notification"
+    # merely because an upstream structured field was blank.
+    start, end = _presentation_application_dates(slide, facts)
     y = 235
     # Timeline
     draw.line((115, y + 42, 115, y + 260), fill=BLUE, width=6)
