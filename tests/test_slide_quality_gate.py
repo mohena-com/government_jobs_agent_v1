@@ -14,6 +14,7 @@ def facts():
         "eligibility": "Graduation / Senior Secondary as post-specific",
         "pay_scale": "Level-10 and Level-5",
         "selection_process": "Computer based competitive examination; Junior Assistant includes a typing test.",
+        "application_fee": "General: ₹1000; EWS/BC/MBC/SC/ST/PwBD: ₹500",
         "official_links": [{"url": "https://example.gov.in/a.pdf"}],
         "post_vacancies": [
             {"post": "Junior Engineer-I (Electrical)", "vacancies": 727},
@@ -41,12 +42,15 @@ def test_blocks_stale_ended_wording_before_deadline():
 
 def test_allows_verified_vacancy_numbers_and_2026_27_identifier():
     slides = [
-        {"number": 1, "type": "title", "headline": "RVUNL Recruitment 2026-27", "subtitle": "2,005 vacancies", "bullets": ["Apply by 25 August 2026"], "facts_used": []},
-        {"number": 2, "type": "vacancies", "headline": "Vacancies", "subtitle": "Post-wise", "bullets": ["Junior Engineer-I (Electrical): 727", "Junior Engineer-I (Mechanical): 110", "Junior Engineer-I (Civil): 32", "Junior Accountant: 371", "Junior Assistant/ Commercial Assistant-II: 765", "Total: 2005"], "facts_used": []},
-        {"number": 3, "type": "eligibility", "headline": "Eligibility", "subtitle": "Qualification", "bullets": ["Graduation / Senior Secondary as post-specific"], "facts_used": []},
-        {"number": 4, "type": "age_pay_fee", "headline": "Age, Pay & Fee", "subtitle": "Key details", "bullets": ["Age: 18-43 years", "Pay: Level-10 and Level-5", "Application fee: ₹500-₹1000"], "facts_used": []},
-        {"number": 5, "type": "dates_selection", "headline": "Dates & Selection", "subtitle": "Important dates", "bullets": ["Applications: 05 August 2026 to 25 August 2026", "Computer based competitive examination; typing test for Junior Assistant"], "facts_used": []},
-        {"number": 6, "type": "apply_links", "headline": "How to Apply", "subtitle": "Official source", "bullets": ["Read the official notification before applying"], "links": [{"label": "Official Notification", "url": "https://example.gov.in/a.pdf"}], "facts_used": []},
+        {"number": 1, "type": "job_details", "headline": "JOB DETAILS", "subtitle": "Vacancy & eligibility", "bullets": [
+            "Junior Engineer-I (Electrical): 727", "Junior Engineer-I (Mechanical): 110", "Junior Engineer-I (Civil): 32",
+            "Junior Accountant: 371", "Junior Assistant/ Commercial Assistant-II: 765", "Total vacancies: 2005",
+            "Age: 18-43 years; Selection: Computer based competitive examination; typing test for Junior Assistant"], "facts_used": []},
+        {"number": 2, "type": "at_a_glance", "headline": "AT A GLANCE", "subtitle": "Pay, fee & dates", "bullets": [
+            "Qualification: Graduation / Senior Secondary as post-specific", "Pay: Level-10 and Level-5",
+            "Application fee: ₹500-₹1000", "Applications: 05 August 2026 to 25 August 2026",
+            "Read the official notification before applying"],
+            "links": [{"label": "Official Notification", "url": "https://example.gov.in/a.pdf"}], "facts_used": []},
     ]
     result = slide_quality_gate({"slides": slides}, facts())
     assert result["status"] == "PASS"

@@ -46,7 +46,7 @@ def generate_from_docx(
     *,
     host: str = "http://localhost:11434",
     model: str = "qwen3:8b",
-    slide_count: int = 6,
+    slide_count: int = 2,
     job_index: int | None = None,
     quality_gate_only: bool = False,
     fail_on_quality_gate: bool = True,

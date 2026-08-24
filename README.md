@@ -67,3 +67,29 @@ Official PDF downloads require network access from the machine running the agent
 
 ## V1.9.23
 See `V1.9.23_CHANGELOG.md`. Daily end-to-end runner: `scripts/generate_all_today.sh`.
+
+
+chmod +x scripts/generate_all_today.sh
+
+
+PYTHON_BIN=python3.1 \
+OLLAMA_HOST=http://webmaster-ai.local:11434 \
+OLLAMA_MODEL=qwen3:8b \
+./scripts/generate_all_today.sh
+
+
+python3 main.py \
+  --docx "reports/jobs/YOUR_JOB.docx" \
+  --qwen \
+  --verify-official \
+  --job-index 1 \
+  --ollama-host http://webmaster-ai.local:11434 \
+  --ollama-model qwen3:8b \
+  --slide-count 2 \
+  --qwen-output social/qwen_v1926
+
+
+python3 main.py \
+  --render-qwen social/qwen_v1926/qwen_instagram_plans.json \
+  --render-output social/rendered_v1926 \
+  --job-index 1

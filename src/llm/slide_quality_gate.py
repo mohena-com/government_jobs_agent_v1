@@ -24,7 +24,7 @@ CONDITIONAL_CLAIMS = {
     "don't miss out": "application status",
 }
 
-EXPECTED_TYPES = ["title", "vacancies", "eligibility", "age_pay_fee", "dates_selection", "apply_links"]
+EXPECTED_TYPES = ["job_details", "at_a_glance"]
 
 
 def _flatten(value: Any) -> list[str]:
@@ -113,8 +113,8 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
     if not slides:
         return {"status": "FAIL", "errors": ["No slides generated"], "warnings": [], "slide_count": 0, "slide_results": []}
 
-    if len(slides) != 6:
-        errors.append(f"Expected 6 presentation slides, generated {len(slides)}")
+    if len(slides) != 2:
+        errors.append(f"Expected 2 presentation slides, generated {len(slides)}")
 
     numbers = _numeric_tokens(source)
     slide_results = []
@@ -132,7 +132,7 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             slide_errors.append("Missing headline")
         if not isinstance(bullets, list):
             slide_errors.append("bullets must be an array")
-        if len(bullets) > 6:
+        if len(bullets) > 8:
             slide_errors.append("Too many bullets for Instagram slide")
         if expected_type and _norm_type(slide.get("type")) != expected_type:
             slide_errors.append(f"Expected slide type '{expected_type}', got '{slide.get('type')}'")
@@ -159,13 +159,13 @@ def slide_quality_gate(plan: dict, facts: dict, *, today: date | None = None) ->
             if end_date >= check_date and any(x in generated_text for x in ("application ended", "applications ended", "deadline passed")):
                 slide_errors.append(f"Stale application-status wording: deadline is {end_date.isoformat()}, not ended as of {check_date.isoformat()}")
 
-        if pos == 6:
+        if pos == 2:
             links = slide.get("links") or []
             if _available_link_count(facts) and not links:
-                slide_errors.append("Slide 6 must contain structured official links; raw URLs must not be rendered as text")
+                slide_errors.append("Slide 2 must contain structured official links; raw URLs must not be rendered as text")
             for link in links:
                 if not isinstance(link, dict) or not link.get("url"):
-                    slide_errors.append("Malformed structured link on slide 6")
+                    slide_errors.append("Malformed structured link on slide 2")
 
         if slide_errors:
             errors.extend([f"Slide {pos}: {e}" for e in slide_errors])

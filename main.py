@@ -18,7 +18,7 @@ p.add_argument("--docx", help="Existing recruitment DOCX to read instead of craw
 p.add_argument("--qwen", action="store_true", help="Send DOCX-derived locked facts to local/LAN Ollama Qwen")
 p.add_argument("--ollama-host", default="http://localhost:11434")
 p.add_argument("--ollama-model", default="qwen3:8b")
-p.add_argument("--slide-count", type=int, default=6)
+p.add_argument("--slide-count", type=int, default=2)
 p.add_argument("--qwen-output", default="social/qwen")
 p.add_argument("--job-index", type=int, default=None, help="1-based job number to send to Qwen (useful for testing)")
 p.add_argument("--quality-gate-only", action="store_true", help="Extract facts and run the quality gate without calling Qwen")

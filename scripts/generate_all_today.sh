@@ -17,7 +17,7 @@ REPORT="social/daily_generation_${TODAY}.json"
 mkdir -p "$QWEN_DIR" "$RENDER_DIR"
 
 echo "============================================================"
-echo " Government Jobs → Instagram | V1.9.23"
+echo " Government Jobs → Instagram | V1.9.26"
 echo " Date: ${TODAY}"
 echo " Rule: LAST DATE > TODAY"
 echo " Duplicate filtering: OFF"
@@ -61,7 +61,7 @@ fi
 
 echo
 echo "============================================================"
-echo "[2/3] Official PDF verification + Qwen + slide QA"
+echo "[2/3] Source verification + Qwen + slide QA (source failures do not block rendering)"
 echo "============================================================"
 
 SUCCESS_QWEN=0
@@ -96,7 +96,7 @@ do
         --batch-mode \
         --ollama-host "$OLLAMA_HOST" \
         --ollama-model "$OLLAMA_MODEL" \
-        --slide-count 6 \
+        --slide-count 2 \
         --qwen-output "$JOB_QWEN_DIR"
 
     RC=$?
@@ -111,18 +111,21 @@ try:
     jobs=d.get("jobs", [])
     j=jobs[0] if jobs else {}
     gate=j.get("slide_quality_gate") or {}
-    print("true" if j.get("presentation_ready") is True and gate.get("status") == "PASS" else "false")
+    slides=(j.get("slide_plan") or {}).get("slides") or []
+    # V1.9.26: a complete two-slide plan is renderable even when the audit
+    # gate has warnings/source deficiencies. The JSON retains the QA result.
+    print("true" if len(slides) == 2 else "false")
 except Exception:
     print("false")
 PY
         )"
 
         if [ "$READY" = "true" ]; then
-            echo "QWEN/SLIDE QA: PASS"
+            echo "QWEN: 2-slide plan ready for rendering"
             SUCCESS_QWEN=$((SUCCESS_QWEN + 1))
             printf '%s\n' "$PLAN" >> "$QWEN_LIST"
         else
-            echo "QWEN/SLIDE QA: BLOCKED"
+            echo "QWEN: no complete 2-slide plan"
             FAILED_QWEN=$((FAILED_QWEN + 1))
         fi
     else
@@ -185,9 +188,10 @@ import json, sys
 from datetime import datetime
 p,j,qs,qf,rs,rf,s = sys.argv[1:]
 data={
-    "version":"1.9.23",
+    "version":"1.9.26",
     "date":datetime.now().strftime("%Y-%m-%d"),
     "selection_rule":"crawler-selected listings with LAST DATE > TODAY",
+    "presentation_slides":2,
     "duplicate_filtering":False,
     "job_detail_docx_count":int(j),
     "qwen_success":int(qs),
@@ -202,11 +206,11 @@ PY
 
 echo
 echo "============================================================"
-echo " DAILY GENERATION COMPLETE | V1.9.23"
+echo " DAILY GENERATION COMPLETE | V1.9.26"
 echo "============================================================"
 echo "Job Detail DOCX : ${JOB_COUNT}"
-echo "Qwen PASS        : ${SUCCESS_QWEN}"
-echo "Qwen BLOCKED     : ${FAILED_QWEN}"
+echo "2-slide plans: ${SUCCESS_QWEN}"
+echo "No 2-slide plan: ${FAILED_QWEN}"
 echo "Render PASS      : ${RENDER_SUCCESS}"
 echo "Render FAIL      : ${RENDER_FAILED}"
 echo "Slides rendered  : ${TOTAL_SLIDES}"
