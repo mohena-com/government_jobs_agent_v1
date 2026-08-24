@@ -23,7 +23,7 @@ FIELD_ALIASES = {
 
 SECTION_NAMES = {
     "key information", "important dates", "application fee", "vacancy details",
-    "eligibility", "how to fill / apply", "selection process", "pay / salary",
+    "eligibility", "how to fill / apply", "how to apply", "selection process", "pay / salary",
     "official links", "source", "pay scale / salary",
 }
 
@@ -125,6 +125,93 @@ def _extract_organisation_from_text(*texts: str) -> str:
                 return _clean(m.group(1))
     return ""
 
+
+
+
+_MONTHS = {m.lower(): i for i, m in enumerate((
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+), 1)}
+
+def _normalise_date_token(day: str, month: str, year: str) -> str:
+    try:
+        if month.isdigit():
+            dt = __import__("datetime").date(int(year), int(month), int(day))
+        else:
+            dt = __import__("datetime").date(int(year), _MONTHS[month.lower()], int(day))
+        return dt.strftime("%d %B %Y")
+    except Exception:
+        return ""
+
+def _extract_date_values(text: str) -> list[str]:
+    """Extract only explicit calendar dates; ignore standalone years/numbers."""
+    text = text or ""
+    found: list[str] = []
+    patterns = [
+        r"(?<!\d)(\d{1,2})[/-](\d{1,2})[/-](20\d{2})(?!\d)",
+        r"(?<!\d)(20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)",
+        r"(?<!\d)(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})(?!\d)",
+    ]
+    for m in re.finditer(patterns[0], text, re.I):
+        value = _normalise_date_token(m.group(1), m.group(2), m.group(3))
+        if value: found.append(value)
+    for m in re.finditer(patterns[1], text, re.I):
+        value = _normalise_date_token(m.group(3), m.group(2), m.group(1))
+        if value: found.append(value)
+    for m in re.finditer(patterns[2], text, re.I):
+        value = _normalise_date_token(m.group(1), m.group(2), m.group(3))
+        if value: found.append(value)
+    return list(dict.fromkeys(found))
+
+def _extract_application_window(*texts: str) -> dict[str, str]:
+    """Recover application start/end from semantic application-window evidence.
+
+    Priority is explicit application/deadline language, then HOW TO APPLY /
+    IMPORTANT DATES ranges. Fee-payment dates are deliberately excluded.
+    """
+    evidence = "\n".join(t for t in texts if t)
+    start = end = ""
+    source = ""
+
+    # A date range in a How-to-Apply/Important-Dates section is the strongest
+    # document-level evidence for the application window.
+    range_patterns = [
+        r"(?<!\d)(\d{1,2}[/-]\d{1,2}[/-]20\d{2})\s*(?:to|[-–—])\s*(\d{1,2}[/-]\d{1,2}[/-]20\d{2})(?!\d)",
+        r"(?<!\d)(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})\s*(?:to|[-–—])\s*(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})(?!\d)",
+    ]
+    for pattern in range_patterns:
+        m = re.search(pattern, evidence, re.I)
+        if m:
+            vals = _extract_date_values(m.group(0))
+            if len(vals) >= 2:
+                start, end = vals[0], vals[1]
+                source = m.group(0).strip()
+                break
+
+    # Explicit application deadline is authoritative for the end date.
+    deadline = _extract_date_from_deadline(next((t for t in texts if t), ""))
+    if deadline:
+        vals = _extract_date_values(deadline)
+        if vals:
+            end = vals[0]
+            source = source or deadline
+
+    # Explicit labels can fill gaps, but never use fee-payment dates as the
+    # application end date.
+    label_patterns = [
+        ("start", r"(?:application\s+start|application\s+begin|opening\s+date)\s*[:\-]?\s*([^\n]+)"),
+        ("end", r"(?:application\s+end|last\s+date\s+to\s+apply|application\s+deadline|closing\s+date)\s*[:\-]?\s*([^\n]+)"),
+    ]
+    for kind, pattern in label_patterns:
+        m = re.search(pattern, evidence, re.I)
+        if m:
+            vals = _extract_date_values(m.group(1))
+            if vals:
+                if kind == "start" and not start: start = vals[0]
+                if kind == "end" and not end: end = vals[0]
+                source = source or m.group(0).strip()
+
+    return {"application_start": start, "application_end": end, "evidence": source}
 
 def _extract_date_from_deadline(text: str) -> str:
     m = re.search(r"APPLICATION\s+DEADLINE\s*:\s*(.+)$", text or "", re.I)
@@ -242,7 +329,7 @@ def _parse_report_doc(doc: Document) -> list[dict]:
 
             # Section text such as important dates / fee / eligibility is collected
             # in dedicated buffers and assigned only to its own field.
-            if section in {"important dates", "application fee", "eligibility", "selection process", "pay / salary", "how to fill / apply"}:
+            if section in {"important dates", "application fee", "eligibility", "selection process", "pay / salary", "how to fill / apply", "how to apply"}:
                 ensure()
                 current.setdefault("section_text", {}).setdefault(section, []).append(text)
                 continue
@@ -306,6 +393,7 @@ def _parse_report_doc(doc: Document) -> list[dict]:
         "selection process": "selection_process",
         "pay / salary": "pay_scale",
         "how to fill / apply": "how_to_apply",
+        "how to apply": "how_to_apply",
     }
     for job in jobs:
         for sec, key in mapping.items():
@@ -366,6 +454,39 @@ def _parse_report_doc(doc: Document) -> list[dict]:
             if sec_key in job.get("fields", {}):
                 cleaned = _clean_section_contamination(job["fields"][sec_key], sec_key)
                 job["fields"][sec_key] = cleaned
+
+        # V1.9.33: semantic application-date recovery. The report can contain
+        # correct dates outside the structured IMPORTANT DATES block. Recover
+        # them from the application/deadline/how-to-apply evidence before the
+        # quality gate and before Qwen sees the facts. Fee-payment dates are not
+        # promoted to application_end.
+        date_info = _extract_application_window(
+            job.get("opening_deadline_display", ""),
+            job.get("fields", {}).get("important_dates", ""),
+            job.get("fields", {}).get("how_to_apply", ""),
+            job.get("fields", {}).get("application_start", ""),
+            job.get("fields", {}).get("application_end", ""),
+        )
+        # V1.9.33 hotfix: semantic evidence outranks an unverified structured
+        # value. The previous implementation only filled missing fields, which
+        # allowed stale/wrong dates (for example 27 July 2007) to survive.
+        # When an explicit application window/deadline is recovered from the
+        # document, bind those values to the semantic fields.
+        if date_info.get("application_start"):
+            old_start = str(job["fields"].get("application_start") or "").strip()
+            if old_start != date_info["application_start"]:
+                job["fields"]["application_start"] = date_info["application_start"]
+                job["extraction_notes"].append(
+                    "application_start bound to semantic document evidence"
+                )
+        if date_info.get("application_end"):
+            old_end = str(job["fields"].get("application_end") or "").strip()
+            if old_end != date_info["application_end"]:
+                job["fields"]["application_end"] = date_info["application_end"]
+                job["extraction_notes"].append(
+                    "application_end bound to semantic document evidence"
+                )
+        job["application_date_evidence"] = date_info.get("evidence", "")
 
     return jobs
 
@@ -436,6 +557,7 @@ def to_locked_facts(job: dict) -> dict:
         "title_vacancy_candidate": job.get("title_vacancy_candidate", ""),
         "total_vacancies_candidate": job.get("total_vacancies_candidate", ""),
         "application_end_candidate": job.get("application_end_candidate", ""),
+        "application_date_evidence": job.get("application_date_evidence", ""),
         "extraction_notes": job.get("extraction_notes", []),
         "derived_vacancy_sum": job.get("derived_vacancy_sum", None),
     }

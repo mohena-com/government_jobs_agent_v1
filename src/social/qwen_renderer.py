@@ -536,8 +536,15 @@ def _presentation_application_dates(slide: dict, facts: dict) -> tuple[str, str]
          validated slide plan
     The renderer never treats fee-payment or exam dates as application dates.
     """
-    start = _date_label(facts.get("application_start"))
-    end = _date_label(facts.get("application_end"))
+    canonical = facts.get("application_dates_canonical") or {}
+    start = _date_label(canonical.get("application_start") or facts.get("application_start"))
+    end = _date_label(canonical.get("application_end") or facts.get("application_end"))
+
+    # V1.9.35: once canonical dates exist, do not mine Qwen prose for a
+    # replacement date. The renderer must be deterministic for application
+    # start/end.
+    if start and end:
+        return start, end
 
     bullets = _slide_bullets(slide)
     text = " ".join(str(x) for x in bullets)

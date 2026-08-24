@@ -122,6 +122,94 @@ def _crosscheck_application_dates(facts: dict, job: dict) -> dict:
     return result
 
 
+
+def _bind_canonical_application_dates(facts: dict, job: dict, verification: dict | None = None) -> dict:
+    """V1.9.35: create one canonical application-date fact pair.
+
+    Priority is deliberately deterministic:
+      1. semantic dates recovered from the Job Detail DOCX
+      2. explicit document deadline/window evidence
+      3. verified official-source dates
+      4. otherwise leave the fields empty for presentation fallback
+
+    A generic verifier must never overwrite a document-supported application
+    window with an unrelated, stale, or differently-scoped date.
+    """
+    fields = job.get("fields") or {}
+    doc_start = str(fields.get("application_start") or "").strip()
+    doc_end = str(fields.get("application_end") or "").strip()
+    doc_evidence = str(job.get("application_date_evidence") or "").strip()
+
+    # If an older Job Detail DOCX has not populated the semantic fields yet,
+    # recover a date pair directly from its preserved evidence. This is still
+    # document-derived; it is not model-generated.
+    evidence_dates = _date_tokens(doc_evidence)
+    if not doc_start and evidence_dates:
+        doc_start = evidence_dates[0]
+    if not doc_end and len(evidence_dates) >= 2:
+        doc_end = evidence_dates[-1]
+
+    verified_start = str((verification or {}).get("application_start") or "").strip()
+    verified_end = str((verification or {}).get("application_end") or "").strip()
+
+    # Document evidence wins whenever it contains an explicit application
+    # window. This is the critical protection against stale verifier output.
+    canonical_start = doc_start or verified_start
+    canonical_end = doc_end or verified_end
+    source = "DOCX_SEMANTIC_EVIDENCE" if (doc_start or doc_end) else ("OFFICIAL_VERIFICATION" if (verified_start or verified_end) else "UNAVAILABLE")
+
+    if canonical_start:
+        facts["application_start"] = canonical_start
+    if canonical_end:
+        facts["application_end"] = canonical_end
+
+    facts["application_dates_canonical"] = {
+        "application_start": canonical_start,
+        "application_end": canonical_end,
+        "source": source,
+        "document_evidence": doc_evidence,
+        "verified_start": verified_start,
+        "verified_end": verified_end,
+    }
+    facts["application_date_evidence"] = doc_evidence
+    return facts
+
+
+def _normalize_application_date_claims(plan: dict, facts: dict) -> dict:
+    """V1.9.35: replace explicit application-date claims with canonical values.
+
+    This keeps Qwen creative while making application start/end deterministic.
+    Fee-payment, exam, notification and admit-card dates are untouched.
+    """
+    if not isinstance(plan, dict):
+        return plan
+    slides = plan.get("slides")
+    if not isinstance(slides, list):
+        return plan
+
+    start = str(facts.get("application_start") or "").strip()
+    end = str(facts.get("application_end") or "").strip()
+    fallback = str((facts.get("presentation_fallbacks") or {}).get("application_start") or "Refer to Official Notification")
+
+    def replace_bullet(value: str) -> str:
+        text = str(value or "")
+        low = text.lower()
+        if not any(k in low for k in ("application start", "application opens", "application opening", "application deadline", "application end", "last date to apply")):
+            return text
+        if start and end:
+            if any(k in low for k in ("application start", "application opens", "application opening")):
+                return f"Application Start: {start}"
+            return f"Application Deadline: {end}"
+        return f"Application Dates: {fallback}"
+
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        if isinstance(slide.get("bullets"), list):
+            slide["bullets"] = [replace_bullet(x) for x in slide["bullets"]]
+    plan["slides"] = slides
+    return plan
+
 def _enforce_application_dates_on_plan(plan: dict, facts: dict) -> dict:
     """V1.9.33 hotfix: deterministically keep slide 5 date content bound to facts.
 
@@ -163,7 +251,7 @@ def _enforce_application_dates_on_plan(plan: dict, facts: dict) -> dict:
 
     target["bullets"] = bullets[:8]
     plan["slides"] = slides
-    return plan
+    return _normalize_application_date_claims(plan, facts)
 
 def generate_from_docx(
     docx_path: str | Path,
@@ -285,11 +373,12 @@ def generate_from_docx(
                         facts["organisation"] = org
             facts["official_verification"] = verification
 
-        # V1.9.33: application dates are semantic facts, not free-form model text.
-        # Cross-check the values after DOCX/official extraction and before the
-        # presentation payload is constructed. If a date cannot be tied back to
-        # document evidence, it is withheld from Qwen and the presentation uses
-        # the controlled fallback instead of a guessed date.
+        # V1.9.35: bind one canonical application-date pair AFTER official
+        # verification. This prevents generic verifier output from overwriting
+        # dates already supported by the Job Detail DOCX.
+        facts = _bind_canonical_application_dates(facts, job, verification)
+
+        # Cross-check the canonical values before Qwen sees them.
         date_crosscheck = _crosscheck_application_dates(facts, job)
         facts["application_dates_crosscheck"] = date_crosscheck
         if date_crosscheck.get("status") == "FAIL":
@@ -323,6 +412,7 @@ def generate_from_docx(
             "fatal_generation_errors": fatal_errors,
             "official_verification": verification,
             "application_dates_crosscheck": date_crosscheck,
+            "application_dates_canonical": facts.get("application_dates_canonical", {}),
         }
 
         # V1.9.29: verification-to-generation decoupling. Missing/unreadable
@@ -415,7 +505,7 @@ def generate_from_docx(
             if r.get("presentation_ready")
         ]
         (output_dir / "instagram_presentation_ready.json").write_text(
-            json.dumps({"version": "1.9.33", "jobs": ready}, ensure_ascii=False, indent=2),
+            json.dumps({"version": "1.9.35", "jobs": ready}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

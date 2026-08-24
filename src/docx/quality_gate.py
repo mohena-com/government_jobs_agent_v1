@@ -75,8 +75,8 @@ def quality_gate(job: dict, facts: dict) -> dict:
         }
         missing_posts = sorted(expected_posts - actual_posts)
         if missing_posts:
-            warnings.append(
-                "Official post eligibility unavailable for: " + ", ".join(missing_posts)
+            errors.append(
+                "Official post eligibility missing for: " + ", ".join(missing_posts)
             )
 
     if canonical:

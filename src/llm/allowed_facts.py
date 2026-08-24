@@ -59,7 +59,7 @@ def build_allowed_facts(facts: dict) -> tuple[dict, dict]:
         "official_verification", "verification_items", "verification_required",
         "derived_vacancy_sum", "extraction_notes", "raw_post_vacancies", "source",
         "application_date_evidence", "application_dates_crosscheck",
-        "application_dates_crosscheck_error",
+        "application_dates_crosscheck_error", "application_dates_canonical",
     ):
         allowed.pop(key, None)
 
