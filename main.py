@@ -32,43 +32,6 @@ p.add_argument("--qwen-prompt", default="prompts_instagram_v1.9.28.txt", help="P
 
 args = p.parse_args()
 
-if args.render_qwen:
-    assets = render_qwen_plan(args.render_qwen, args.render_output, job_index=args.job_index)
-    print(f"Rendered Instagram slides: {len(assets)}")
-    for asset in assets:
-        print(asset)
-    raise SystemExit(0)
-
-if args.docx:
-    if not args.qwen and not args.quality_gate_only:
-        from src.docx.reader import read_docx
-        parsed = read_docx(args.docx)
-        print(f"DOCX: {args.docx}")
-        print(f"Jobs detected: {parsed['job_count']}")
-        for i, job in enumerate(parsed["jobs"], 1):
-            print(f"  {i:02d}. {job.get('title') or 'Untitled'}")
-        raise SystemExit(0)
-
-    summary, records = generate_from_docx(
-        args.docx,
-        args.qwen_output,
-        host=args.ollama_host,
-        model=args.ollama_model,
-        slide_count=args.slide_count,
-        job_index=args.job_index,
-        quality_gate_only=args.quality_gate_only,
-        fail_on_quality_gate=not args.allow_qwen_on_failed_gate,
-        verify_official=args.verify_official,
-        batch_mode=args.batch_mode,
-        prompt_path=args.qwen_prompt,
-    )
-    print(f"DOCX: {args.docx}")
-    print(f"Ollama: {args.ollama_host}")
-    print(f"Model: {args.ollama_model}")
-    print(f"Jobs processed: {len(records)}")
-    print(f"Qwen output: {summary}")
-    raise SystemExit(0)
-
 # Existing V1.6 crawler path remains intact.
 from datetime import datetime
 from zoneinfo import ZoneInfo
