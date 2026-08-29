@@ -83,6 +83,6 @@ print(f"Future listings crawled: {len(results)}")
 print(f"Summary Report: {summary_path}")
 print(f"Job Detail Reports: {len(job_files)}")
 
-if args.instagram:
-    assets = generate_instagram_assets(results, Path(args.social_dir))
-    print(f"Instagram carousels generated: {len(assets)}")
+# if args.instagram:
+#    assets = generate_instagram_assets(results, Path(args.social_dir))
+#    print(f"Instagram carousels generated: {len(assets)}")
