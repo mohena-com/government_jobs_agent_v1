@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+REPORTS_DIR="${REPORTS_DIR:-${1:-../reports}}"
 set -u
 
 PYTHON_BIN="${PYTHON_BIN:-python3.1}"
@@ -14,7 +15,7 @@ echo "[1] Generate one job DOCX"
 
 "$PYTHON_BIN" main.py --max-jobs 1 || exit 1
 
-DOCX="$(ls -t reports/jobs/*.docx | grep -v 'Summary.docx' | head -1)"
+DOCX="$(ls -t "$REPORTS_DIR/jobs/"*.docx | grep -v 'Summary.docx' | head -1)"
 
 if [ -z "$DOCX" ]; then
     echo "ERROR: No Job Detail DOCX found."
