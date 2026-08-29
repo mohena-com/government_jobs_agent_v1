@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 from src.sarkariresult.pipeline import crawl
-from src.report.docx import make_report
+from src.report.report_generator_txt import make_report
 from src.social.instagram import generate_instagram_assets
 from src.social.qwen_instagram import generate_from_docx
 from src.social.qwen_renderer import render_qwen_plan
