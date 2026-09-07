@@ -1,22 +1,31 @@
-# Government Jobs Agent V1
+# SarkariResult Latest Jobs Text Reports
 
-Python MVP for daily Indian government recruitment monitoring.
-
-Pipeline: Employment News + UPSC + SSC + NCS discovery -> PDF download -> PyMuPDF extraction -> optional OpenAI structured extraction -> official-domain verification -> SQLite deduplication -> clickable DOCX report.
+The crawler reads future listings from `https://www.sarkariresult.com/latestjob/`, fetches each detail page, and writes plain-text reports.
 
 ## Run
-python -m venv .venv
+
+```bash
+python3.1 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-python main.py
 
-Report-only: `python main.py --report-only`
-Tests: `pytest -q`
+python3.1 main.py --max-jobs 3
+```
 
-## Schedule
-GitHub Actions runs at 23:30 UTC = 05:00 IST. GitHub may delay scheduled jobs slightly.
+Reports are written under `../reports/` by default:
 
-## V1 note
-Google Drive/email notifications are intentionally left as the next integration layer. The core agent is local/cloud-runner friendly and produces a DOCX artifact.
-"# government_jobs_agent_v1" 
+- `SarkariResult_LatestJobs_<date>_Summary.txt`
+- `jobs/<number>_<title>_<date>.txt`
+
+Useful options are `--max-jobs`, `--only`, `--published-today`, `--refresh`, and `--reports-dir`.
+
+Use `python main.py --refresh` to recrawl every current future listing, including
+URLs already present in the scrape history.
+
+Default runtime settings are in `app_config.yaml`. Command-line options override
+the matching YAML values. Install dependencies with `pip install -r requirements.txt`.
+
+Successfully scraped listing URLs are stored separately in `../data/scraped_jobs.sqlite3`.
+Listings already in that database are skipped on later runs; failed detail-page
+requests are not recorded and will be retried. Deleting or archiving files under
+`../reports/jobs/` does not remove this scrape history.

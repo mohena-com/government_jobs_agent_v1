@@ -1,8 +1,6 @@
+data/
+reports/
 .venv/
-.env
 __pycache__/
-*.pyc
-data/recruitment.db
-data/documents/
-reports/*.docx
 .pytest_cache/
+.env
