@@ -5,7 +5,7 @@ from src.sarkariresult.pipeline import crawl
 from src.report.report_generator_txt import make_report
 
 p = argparse.ArgumentParser(description="SarkariResult latest jobs crawler and text report generator")
-p.add_argument("--reports-dir", default="reports", help="External directory for generated reports")
+p.add_argument("--reports-dir", default="../reports", help="External directory for generated reports")
 p.add_argument("--max-jobs", type=int, default=None)
 p.add_argument("--only", default=None)
 p.add_argument("--published-today", action="store_true", help="Crawl only jobs whose Published/Updated date is today (IST)")

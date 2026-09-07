@@ -5,11 +5,11 @@ The crawler reads future listings from `https://www.sarkariresult.com/latestjob/
 ## Run
 
 ```bash
-python -m venv .venv
+python3.1 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python main.py --max-jobs 3
+python3.1 main.py --max-jobs 3
 ```
 
 Reports are written under `reports/`:
