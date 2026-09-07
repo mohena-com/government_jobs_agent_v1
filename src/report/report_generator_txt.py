@@ -292,11 +292,14 @@ def make_report(today, results, out):
 
     jobs_dir = out.parent / "jobs"
 
-    summary_path = make_summary_report(
-        today,
-        results,
-        summary_out,
-    )
+    if results or not summary_out.exists():
+        summary_path = make_summary_report(
+            today,
+            results,
+            summary_out,
+        )
+    else:
+        summary_path = summary_out
 
     job_files = make_job_reports(
         today,
