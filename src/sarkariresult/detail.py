@@ -24,8 +24,11 @@ SECTION_HEADINGS = {
     "important_instructions": ["important instruction", "important note", "instructions"],
 }
 
-def fetch_detail(url):
-    r = requests.get(url, headers=HEADERS, timeout=45, allow_redirects=True)
+def fetch_detail(url, config=None):
+    config = config or {}
+    headers = {"User-Agent": config.get("user_agent", HEADERS["User-Agent"])}
+    timeout = config.get("request_timeout", 45)
+    r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "lxml")
     return soup, r.url, r.text
@@ -183,8 +186,8 @@ def find_best_links(links):
         "external_candidates": official_candidates,
     }
 
-def extract_detail(url, listing):
-    soup, final_url, raw_html = fetch_detail(url)
+def extract_detail(url, listing, config=None):
+    soup, final_url, raw_html = fetch_detail(url, config=config)
     text = clean_visible_text(soup)
     tables = extract_tables(soup)
     links = extract_links(soup, final_url)

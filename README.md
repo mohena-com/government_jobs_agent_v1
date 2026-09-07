@@ -18,3 +18,6 @@ Reports are written under `reports/`:
 - `jobs/<number>_<title>_<date>.txt`
 
 Useful options are `--max-jobs`, `--only`, `--published-today`, and `--reports-dir`.
+
+Default runtime settings are in `app_config.yaml`. Command-line options override
+the matching YAML values. Install dependencies with `pip install -r requirements.txt`.

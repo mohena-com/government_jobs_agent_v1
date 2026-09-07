@@ -1,0 +1,9 @@
+# Default runtime settings. CLI options override these values when provided.
+reports_dir: ../reports
+max_jobs: null
+only: null
+published_today: false
+source_url: https://www.sarkariresult.com/latestjob/
+request_timeout: 45
+user_agent: GovernmentJobsAgent/2.0
+timezone: Asia/Kolkata

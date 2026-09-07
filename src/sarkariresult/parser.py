@@ -41,14 +41,19 @@ def normalise_url(url, base):
     url, _ = urldefrag(url)
     return url
 
-def fetch(url):
-    r = requests.get(url, headers=HEADERS, timeout=45, allow_redirects=True)
+def fetch(url, config=None):
+    config = config or {}
+    headers = {"User-Agent": config.get("user_agent", HEADERS["User-Agent"])}
+    timeout = config.get("request_timeout", 45)
+    r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
     r.raise_for_status()
     return r.text, r.url, r.headers.get("content-type", "")
 
-def find_latest_listings(today=None):
+def find_latest_listings(today=None, config=None):
     today = today or date.today()
-    html, final_url, _ = fetch(LATEST_URL)
+    config = config or {}
+    source_url = config.get("source_url", LATEST_URL)
+    html, final_url, _ = fetch(source_url, config=config)
     soup = BeautifulSoup(html, "lxml")
 
     rows = []
@@ -91,7 +96,7 @@ def find_latest_listings(today=None):
             "url": url,
             "last_date": last_date.isoformat(),
             "extended": "extended" in low,
-            "discovery_source": LATEST_URL,
+            "discovery_source": source_url,
         })
 
     rows.sort(key=lambda x: (x["last_date"], x["title"].lower()))

@@ -18,9 +18,11 @@ def _published_date(value):
             pass
     return None
 
-def crawl(max_jobs=None, only=None, published_on: date | None = None):
-    today = datetime.now(IST).date()
-    listings = find_latest_listings(today)
+def crawl(max_jobs=None, only=None, published_on: date | None = None, config=None):
+    config = config or {}
+    timezone = ZoneInfo(config.get("timezone", "Asia/Kolkata"))
+    today = datetime.now(timezone).date()
+    listings = find_latest_listings(today, config=config)
 
     if only:
         keys = [x.strip().lower() for x in only.split(",") if x.strip()]
@@ -39,7 +41,7 @@ def crawl(max_jobs=None, only=None, published_on: date | None = None):
     results = []
     for listing in listings:
         try:
-            detail = extract_detail(listing["url"], listing)
+            detail = extract_detail(listing["url"], listing, config=config)
         except Exception as e:
             detail = {
                 "listing": listing,
