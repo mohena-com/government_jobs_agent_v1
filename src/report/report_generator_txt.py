@@ -245,6 +245,29 @@ def make_summary_report(today, results, out):
     return out
 
 
+def _summary_from_job_reports(today, jobs_dir, out):
+    entries = []
+    seen_urls = set()
+    for path in sorted(Path(jobs_dir).glob("*.txt")):
+        text = path.read_text(encoding="utf-8")
+        source = re.search(r"^SarkariResult detail page:\s*(.+)$", text, re.MULTILINE)
+        source_url = source.group(1).strip() if source else ""
+        if source_url and source_url in seen_urls:
+            continue
+        if source_url:
+            seen_urls.add(source_url)
+        title = text.splitlines()[0].strip() if text.splitlines() else path.stem
+        organisation = re.search(r"^Organisation:\s*(.+)$", text, re.MULTILINE)
+        deadline = re.search(r"^Application Deadline:\s*(.+)$", text, re.MULTILINE)
+        entries.append({
+            "post_title": title,
+            "organisation": organisation.group(1).strip() if organisation else "Not identified",
+            "application_end": deadline.group(1).strip() if deadline else "",
+        })
+
+    return make_summary_report(today, entries, out)
+
+
 def make_job_reports(today, results, output_dir):
     """Create one TXT file per recruitment."""
     output_dir = Path(output_dir)
@@ -298,6 +321,8 @@ def make_report(today, results, out):
             results,
             summary_out,
         )
+    elif any(jobs_dir.glob("*.txt")):
+        summary_path = _summary_from_job_reports(today, jobs_dir, summary_out)
     else:
         summary_path = summary_out
 
