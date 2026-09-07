@@ -19,14 +19,15 @@ def _published_date(value):
             pass
     return None
 
-def crawl(max_jobs=None, only=None, published_on: date | None = None, config=None):
+def crawl(max_jobs=None, only=None, published_on: date | None = None, config=None, refresh=False):
     config = config or {}
     timezone = ZoneInfo(config.get("timezone", "Asia/Kolkata"))
     today = datetime.now(timezone).date()
     listings = find_latest_listings(today, config=config)
 
     with ScrapeStore(config.get("scraped_db", "../data/scraped_jobs.sqlite3")) as store:
-        listings = [listing for listing in listings if not store.has_scraped(listing["url"])]
+        if not refresh:
+            listings = [listing for listing in listings if not store.has_scraped(listing["url"])]
 
         if only:
             keys = [x.strip().lower() for x in only.split(",") if x.strip()]

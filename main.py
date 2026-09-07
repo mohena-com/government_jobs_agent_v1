@@ -13,6 +13,7 @@ p.add_argument("--reports-dir", default=None, help="External directory for gener
 p.add_argument("--max-jobs", type=int, default=None)
 p.add_argument("--only", default=None)
 p.add_argument("--published-today", action="store_true", help="Crawl only jobs whose Published/Updated date is today (IST)")
+p.add_argument("--refresh", action="store_true", help="Recrawl all current listings, including previously scraped URLs")
 
 args = p.parse_args()
 
@@ -27,6 +28,7 @@ today, results = crawl(
 	only=only,
 	published_on=published_on,
 	config=config,
+	refresh=args.refresh,
 )
 base_report = Path(reports_dir) / f"SarkariResult_LatestJobs_{today.isoformat()}"
 summary_path, job_files = make_report(today, results, base_report)

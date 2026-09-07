@@ -17,7 +17,10 @@ Reports are written under `../reports/` by default:
 - `SarkariResult_LatestJobs_<date>_Summary.txt`
 - `jobs/<number>_<title>_<date>.txt`
 
-Useful options are `--max-jobs`, `--only`, `--published-today`, and `--reports-dir`.
+Useful options are `--max-jobs`, `--only`, `--published-today`, `--refresh`, and `--reports-dir`.
+
+Use `python main.py --refresh` to recrawl every current future listing, including
+URLs already present in the scrape history.
 
 Default runtime settings are in `app_config.yaml`. Command-line options override
 the matching YAML values. Install dependencies with `pip install -r requirements.txt`.
