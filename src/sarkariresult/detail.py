@@ -14,9 +14,10 @@ LINK_KEYWORDS = (
 
 SECTION_HEADINGS = {
     "important_dates": ["important dates"],
-    "application_fee": ["application fee", "exam fee"],
-    "age_limit": ["age limit"],
+    "application_fee": ["application fee", "exam fee", "application fees"],
+    "age_limit": ["age limit", "age limit details", "age criteria", "age criteria", "age eligibility", "age eligibility criteria"],
     "vacancy_details": ["vacancy details", "vacancy detail"],
+    "category_wise_vacancy_details": ["category wise vacancy details"],
     "eligibility": ["eligibility", "educational qualification", "qualification"],
     "how_to_apply": ["how to fill", "how to apply"],
     "selection_process": ["selection process", "selection procedure"],
