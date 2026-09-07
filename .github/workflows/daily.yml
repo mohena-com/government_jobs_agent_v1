@@ -12,10 +12,7 @@ jobs:
         with: {python-version: '3.11'}
       - run: pip install -r requirements.txt
       - run: python main.py
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
       - uses: actions/upload-artifact@v4
         with:
           name: government-jobs-report
-          path: reports/*.docx
+          path: reports/**/*.txt
