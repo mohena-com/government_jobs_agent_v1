@@ -7,3 +7,4 @@ source_url: https://www.sarkariresult.com/latestjob/
 request_timeout: 45
 user_agent: GovernmentJobsAgent/2.0
 timezone: Asia/Kolkata
+scraped_db: ../data/scraped_jobs.sqlite3

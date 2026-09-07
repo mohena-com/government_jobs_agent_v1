@@ -31,7 +31,7 @@ today, results = crawl(
 base_report = Path(reports_dir) / f"SarkariResult_LatestJobs_{today.isoformat()}"
 summary_path, job_files = make_report(today, results, base_report)
 
-print("Source: https://www.sarkariresult.com/latestjob/")
+print(f"Source: {config.get('source_url', 'https://www.sarkariresult.com/latestjob/')}")
 print(f"Date (IST): {today}")
 print(f"Future listings crawled: {len(results)}")
 print(f"Summary Report: {summary_path}")
